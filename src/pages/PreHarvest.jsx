@@ -1,9 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   Loader2,
   MapPin,
   Minus,
@@ -23,6 +28,10 @@ import { supabase } from '../config/supabaseClient';
 
 const CART_KEY = 'agrolink_cart';
 
+// -----------------------------
+// Formatting helpers
+// -----------------------------
+
 const formatDate = (date) => {
   if (!date) return 'Not specified';
 
@@ -34,12 +43,18 @@ const formatDate = (date) => {
 };
 
 const formatNumber = (value) => {
-  return new Intl.NumberFormat('en-NG').format(Number(value || 0));
+  return new Intl.NumberFormat('en-NG').format(
+    Number(value || 0)
+  );
 };
 
 const formatCurrency = (value) => {
   return `₦${formatNumber(value)}`;
 };
+
+// -----------------------------
+// Image helpers
+// -----------------------------
 
 const getProductImages = (imagePath) => {
   if (!imagePath) return [];
@@ -64,7 +79,9 @@ const getProductImages = (imagePath) => {
 };
 
 const getStorageImageUrl = (imagePath) => {
-  if (!imagePath || typeof imagePath !== 'string') return null;
+  if (!imagePath || typeof imagePath !== 'string') {
+    return null;
+  }
 
   if (
     imagePath.startsWith('http://') ||
@@ -84,6 +101,10 @@ const getStorageImageUrl = (imagePath) => {
   return data?.publicUrl || null;
 };
 
+// -----------------------------
+// Producer helpers
+// -----------------------------
+
 const getProducerName = (producer) => {
   if (!producer) return 'AgroLink Producer';
 
@@ -94,6 +115,10 @@ const getProducerName = (producer) => {
     'AgroLink Producer'
   );
 };
+
+// -----------------------------
+// Cart helpers
+// -----------------------------
 
 const getCart = () => {
   try {
@@ -113,7 +138,10 @@ const getCart = () => {
 const saveCart = (cart) => {
   try {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    window.dispatchEvent(new Event('agrolink-cart-updated'));
+
+    window.dispatchEvent(
+      new Event('agrolink-cart-updated')
+    );
   } catch (error) {
     console.error('Unable to save AgroLink cart:', error);
   }
@@ -146,12 +174,14 @@ const addProductToCart = (
   }
 
   const cart = getCart();
+
   const existingIndex = cart.findIndex(
     (item) => item.id === product.id
   );
 
   if (existingIndex !== -1) {
     const existingItem = cart[existingIndex];
+
     const newQuantity =
       Number(existingItem.quantity || 0) + quantityToAdd;
 
@@ -210,18 +240,28 @@ const addProductToCart = (
   };
 };
 
+// -----------------------------
+// Main component
+// -----------------------------
+
 export default function PreHarvest() {
   const navigate = useNavigate();
 
   const [products, setProducts] = useState([]);
   const [producerProfiles, setProducerProfiles] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
+
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedQuantity, setSelectedQuantity] = useState(1);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // -----------------------------
+  // Fetch pre-harvest products
+  // -----------------------------
 
   const fetchPreHarvestProducts = useCallback(
     async (showLoader = true) => {
@@ -234,29 +274,33 @@ export default function PreHarvest() {
       setErrorMessage('');
 
       try {
-        const { data: productData, error: productError } =
-          await supabase
-            .from('products')
-            .select(`
-              id,
-              producer_id,
-              crop_name,
-              quantity,
-              unit,
-              price_per_unit,
-              location,
-              image_path,
-              product_type,
-              created_at
-            `)
-            .eq('product_type', 'pre_harvest')
-            .order('created_at', { ascending: false });
+        const {
+          data: productData,
+          error: productError,
+        } = await supabase
+          .from('products')
+          .select(`
+            id,
+            producer_id,
+            crop_name,
+            description,
+            quantity,
+            unit,
+            price_per_unit,
+            location,
+            image_path,
+            product_type,
+            created_at
+          `)
+          .eq('product_type', 'pre_harvest')
+          .order('created_at', { ascending: false });
 
         if (productError) {
           throw productError;
         }
 
         const fetchedProducts = productData || [];
+
         setProducts(fetchedProducts);
 
         const producerIds = [
@@ -272,19 +316,21 @@ export default function PreHarvest() {
           return;
         }
 
-        const { data: profileData, error: profileError } =
-          await supabase
-            .from('profiles')
-            .select(`
-              id,
-              full_name,
-              business_name,
-              role,
-              verification_status,
-              farm_name,
-              farm_location
-            `)
-            .in('id', producerIds);
+        const {
+          data: profileData,
+          error: profileError,
+        } = await supabase
+          .from('profiles')
+          .select(`
+            id,
+            full_name,
+            business_name,
+            role,
+            verification_status,
+            farm_name,
+            farm_location
+          `)
+          .in('id', producerIds);
 
         if (profileError) {
           console.warn(
@@ -319,6 +365,10 @@ export default function PreHarvest() {
     []
   );
 
+  // -----------------------------
+  // Initial fetch and realtime
+  // -----------------------------
+
   useEffect(() => {
     fetchPreHarvestProducts(true);
 
@@ -330,6 +380,7 @@ export default function PreHarvest() {
           event: '*',
           schema: 'public',
           table: 'products',
+          filter: 'product_type=eq.pre_harvest',
         },
         () => {
           fetchPreHarvestProducts(false);
@@ -341,6 +392,10 @@ export default function PreHarvest() {
       supabase.removeChannel(channel);
     };
   }, [fetchPreHarvestProducts]);
+
+  // -----------------------------
+  // Reset modal state
+  // -----------------------------
 
   useEffect(() => {
     if (!selectedProduct) {
@@ -354,6 +409,10 @@ export default function PreHarvest() {
     setSelectedQuantity(available > 0 ? 1 : 0);
     setSelectedImageIndex(0);
   }, [selectedProduct]);
+
+  // -----------------------------
+  // Close modal with Escape
+  // -----------------------------
 
   useEffect(() => {
     const handleEscape = (event) => {
@@ -372,6 +431,10 @@ export default function PreHarvest() {
       document.body.style.overflow = '';
     };
   }, [selectedProduct]);
+
+  // -----------------------------
+  // Derived products
+  // -----------------------------
 
   const enrichedProducts = useMemo(() => {
     return products.map((product) => ({
@@ -400,16 +463,25 @@ export default function PreHarvest() {
 
   const totalQuantity = useMemo(() => {
     return products.reduce(
-      (total, product) => total + Number(product.quantity || 0),
+      (total, product) =>
+        total + Number(product.quantity || 0),
       0
     );
   }, [products]);
 
-  const handleAddToCart = (product) => {
-    const producer = producerProfiles[product.producer_id] || null;
-    const producerName = getProducerName(producer);
+  // -----------------------------
+  // Cart actions
+  // -----------------------------
 
-    const result = addProductToCart(product, producerName, 1);
+  const handleAddToCart = (product) => {
+    const producer =
+      producerProfiles[product.producer_id] || null;
+
+    const result = addProductToCart(
+      product,
+      getProducerName(producer),
+      1
+    );
 
     if (!result.success) {
       toast.error(result.message);
@@ -420,10 +492,14 @@ export default function PreHarvest() {
   };
 
   const handleQuickBuy = (product) => {
-    const producer = producerProfiles[product.producer_id] || null;
-    const producerName = getProducerName(producer);
+    const producer =
+      producerProfiles[product.producer_id] || null;
 
-    const result = addProductToCart(product, producerName, 1);
+    const result = addProductToCart(
+      product,
+      getProducerName(producer),
+      1
+    );
 
     if (!result.success) {
       toast.error(result.message);
@@ -438,7 +514,7 @@ export default function PreHarvest() {
   };
 
   const handleModalAddToCart = () => {
-    if (!selectedProduct) return;
+    if (!selectedProduct || selectedQuantity <= 0) return;
 
     const producer =
       producerProfiles[selectedProduct.producer_id] || null;
@@ -462,7 +538,7 @@ export default function PreHarvest() {
   };
 
   const handleModalBuyNow = () => {
-    if (!selectedProduct) return;
+    if (!selectedProduct || selectedQuantity <= 0) return;
 
     const producer =
       producerProfiles[selectedProduct.producer_id] || null;
@@ -479,6 +555,7 @@ export default function PreHarvest() {
     }
 
     const cropName = selectedProduct.crop_name;
+
     setSelectedProduct(null);
 
     toast.success(
@@ -487,6 +564,10 @@ export default function PreHarvest() {
 
     navigate('/checkout');
   };
+
+  // -----------------------------
+  // Quantity controls
+  // -----------------------------
 
   const increaseQuantity = () => {
     if (!selectedProduct) return;
@@ -499,8 +580,14 @@ export default function PreHarvest() {
   };
 
   const decreaseQuantity = () => {
-    setSelectedQuantity((current) => Math.max(current - 1, 1));
+    setSelectedQuantity((current) =>
+      Math.max(current - 1, 1)
+    );
   };
+
+  // -----------------------------
+  // Selected product details
+  // -----------------------------
 
   const selectedImages = selectedProduct
     ? getProductImages(selectedProduct.image_path)
@@ -509,7 +596,10 @@ export default function PreHarvest() {
   const selectedImageUrl = selectedImages.length
     ? getStorageImageUrl(
         selectedImages[
-          Math.min(selectedImageIndex, selectedImages.length - 1)
+          Math.min(
+            selectedImageIndex,
+            selectedImages.length - 1
+          )
         ]
       )
     : null;
@@ -529,10 +619,15 @@ export default function PreHarvest() {
       ? 'Low stock'
       : 'Available for booking';
 
+  // -----------------------------
+  // Render
+  // -----------------------------
+
   return (
     <main className="min-h-screen bg-slate-50 px-3 py-6 sm:px-6 sm:py-8 lg:px-8">
       <section className="mx-auto max-w-7xl">
-        {/* Compact hero */}
+
+        {/* Hero */}
         <div className="relative mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-800 via-emerald-700 to-green-500 p-5 text-white shadow-lg sm:mb-6 sm:p-7">
           <div className="pointer-events-none absolute -right-16 -top-16 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
           <div className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-lime-300/10 blur-3xl" />
@@ -555,7 +650,10 @@ export default function PreHarvest() {
 
             <div className="mt-5 grid max-w-2xl grid-cols-2 gap-2.5 sm:grid-cols-3">
               <div className="rounded-xl border border-white/10 bg-white/10 p-3 backdrop-blur-sm">
-                <p className="text-[11px] text-emerald-100">Listings</p>
+                <p className="text-[11px] text-emerald-100">
+                  Listings
+                </p>
+
                 <p className="mt-1 text-lg font-black">
                   {formatNumber(products.length)}
                 </p>
@@ -565,6 +663,7 @@ export default function PreHarvest() {
                 <p className="text-[11px] text-emerald-100">
                   Quantity listed
                 </p>
+
                 <p className="mt-1 text-lg font-black">
                   {formatNumber(totalQuantity)}
                 </p>
@@ -574,6 +673,7 @@ export default function PreHarvest() {
                 <p className="text-[11px] text-emerald-100">
                   Booking type
                 </p>
+
                 <p className="mt-1 text-sm font-black">
                   Advance booking
                 </p>
@@ -582,7 +682,7 @@ export default function PreHarvest() {
           </div>
         </div>
 
-        {/* Compact toolbar */}
+        {/* Toolbar */}
         <div className="mb-5 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -609,7 +709,9 @@ export default function PreHarvest() {
                 <input
                   type="text"
                   value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onChange={(event) =>
+                    setSearchTerm(event.target.value)
+                  }
                   placeholder="Search crop, location or producer..."
                   className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
                 />
@@ -663,7 +765,7 @@ export default function PreHarvest() {
           </div>
         )}
 
-        {/* Empty */}
+        {/* Empty state */}
         {!loading &&
           !errorMessage &&
           filteredProducts.length === 0 && (
@@ -696,7 +798,7 @@ export default function PreHarvest() {
             </div>
           )}
 
-        {/* Compact product grid */}
+        {/* Product grid */}
         {!loading &&
           !errorMessage &&
           filteredProducts.length > 0 && (
@@ -716,7 +818,7 @@ export default function PreHarvest() {
                     key={product.id}
                     className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-lg"
                   >
-                    {/* Smaller image */}
+                    {/* Product image */}
                     <div className="relative h-32 overflow-hidden bg-emerald-50 sm:h-36">
                       {imageUrl ? (
                         <img
@@ -749,23 +851,21 @@ export default function PreHarvest() {
                       )}
                     </div>
 
-                    {/* Smaller content */}
+                    {/* Product content */}
                     <div className="p-3.5">
-                      <div className="min-w-0">
-                        <h3 className="truncate text-base font-black capitalize text-slate-900">
-                          {product.crop_name}
-                        </h3>
+                      <h3 className="truncate text-base font-black capitalize text-slate-900">
+                        {product.crop_name}
+                      </h3>
 
-                        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
-                          <MapPin
-                            size={13}
-                            className="shrink-0 text-emerald-600"
-                          />
+                      <div className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
+                        <MapPin
+                          size={13}
+                          className="shrink-0 text-emerald-600"
+                        />
 
-                          <span className="truncate">
-                            {product.location || 'Location not specified'}
-                          </span>
-                        </div>
+                        <span className="truncate">
+                          {product.location || 'Location not specified'}
+                        </span>
                       </div>
 
                       <div className="mt-3 flex items-center gap-2">
@@ -781,7 +881,7 @@ export default function PreHarvest() {
                       <div className="mt-3 flex items-end justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-[10px] text-slate-500">
-                            Price / {product.unit}
+                            Price / {product.unit || 'unit'}
                           </p>
 
                           <p className="mt-0.5 truncate text-base font-black text-emerald-700">
@@ -795,7 +895,8 @@ export default function PreHarvest() {
                           </p>
 
                           <p className="mt-0.5 text-xs font-black text-slate-800">
-                            {formatNumber(product.quantity)} {product.unit}
+                            {formatNumber(product.quantity)}{' '}
+                            {product.unit || 'unit'}
                           </p>
                         </div>
                       </div>
@@ -838,7 +939,7 @@ export default function PreHarvest() {
           )}
       </section>
 
-      {/* Improved product details modal */}
+      {/* Product details modal */}
       {selectedProduct && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-3 py-4 backdrop-blur-sm sm:px-5"
@@ -848,7 +949,12 @@ export default function PreHarvest() {
             }
           }}
         >
-          <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:rounded-3xl lg:flex-row">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pre-harvest-product-title"
+            className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:rounded-3xl lg:flex-row"
+          >
             {/* Gallery */}
             <div className="relative bg-slate-100 lg:w-[46%]">
               <div className="relative h-56 overflow-hidden sm:h-64 lg:h-full lg:min-h-[520px]">
@@ -955,7 +1061,10 @@ export default function PreHarvest() {
                     Advance booking listing
                   </p>
 
-                  <h2 className="mt-1 text-2xl font-black capitalize text-slate-900 sm:text-3xl">
+                  <h2
+                    id="pre-harvest-product-title"
+                    className="mt-1 text-2xl font-black capitalize text-slate-900 sm:text-3xl"
+                  >
                     {selectedProduct.crop_name}
                   </h2>
 
@@ -977,10 +1086,11 @@ export default function PreHarvest() {
                 </span>
               </div>
 
+              {/* Price and quantity */}
               <div className="mt-5 grid grid-cols-2 gap-2.5">
                 <div className="rounded-xl bg-emerald-50 p-3">
                   <p className="text-[11px] text-emerald-700">
-                    Price per {selectedProduct.unit}
+                    Price per {selectedProduct.unit || 'unit'}
                   </p>
 
                   <p className="mt-1 text-lg font-black text-emerald-700">
@@ -995,14 +1105,17 @@ export default function PreHarvest() {
 
                   <p className="mt-1 text-lg font-black text-slate-900">
                     {formatNumber(selectedProduct.quantity)}{' '}
-                    {selectedProduct.unit}
+                    {selectedProduct.unit || 'unit'}
                   </p>
                 </div>
               </div>
 
+              {/* Product information */}
               <div className="mt-4 space-y-2">
                 <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                  <span className="text-xs text-slate-500">Location</span>
+                  <span className="text-xs text-slate-500">
+                    Location
+                  </span>
 
                   <span className="text-right text-xs font-bold text-slate-900">
                     {selectedProduct.location || 'Not specified'}
@@ -1010,7 +1123,9 @@ export default function PreHarvest() {
                 </div>
 
                 <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                  <span className="text-xs text-slate-500">Listed</span>
+                  <span className="text-xs text-slate-500">
+                    Listed
+                  </span>
 
                   <span className="text-right text-xs font-bold text-slate-900">
                     {formatDate(selectedProduct.created_at)}
@@ -1018,7 +1133,9 @@ export default function PreHarvest() {
                 </div>
 
                 <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                  <span className="text-xs text-slate-500">Listing type</span>
+                  <span className="text-xs text-slate-500">
+                    Listing type
+                  </span>
 
                   <span className="text-right text-xs font-bold text-slate-900">
                     Pre-harvest
@@ -1058,13 +1175,13 @@ export default function PreHarvest() {
                 </div>
               </div>
 
-              {/* Description fallback */}
+              {/* Description */}
               <div className="mt-5">
                 <h3 className="text-sm font-black text-slate-900">
                   Product description
                 </h3>
 
-                <p className="mt-2 text-sm leading-6 text-slate-500">
+                <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-500">
                   {selectedProduct.description ||
                     'No detailed description has been added by the producer yet. Please review the available quantity, location, price, and booking information before continuing.'}
                 </p>

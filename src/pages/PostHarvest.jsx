@@ -184,6 +184,7 @@ export default function PostHarvest() {
               location,
               image_path,
               product_type,
+              description,
               created_at
             `)
             .eq('product_type', 'post_harvest')
@@ -422,6 +423,7 @@ export default function PostHarvest() {
         location: product.location,
         imagePath: product.image_path,
         productType: product.product_type,
+        description: product.description || '',
         producerName: getProducerName(product.producer),
       };
     } else {
@@ -438,6 +440,7 @@ export default function PostHarvest() {
           location: product.location,
           imagePath: product.image_path,
           productType: product.product_type,
+          description: product.description || '',
           producerName: getProducerName(product.producer),
         },
       ];
@@ -801,6 +804,14 @@ export default function PostHarvest() {
                           {product.location || 'Location not specified'}
                         </span>
                       </div>
+
+                      <p className="mt-3 text-sm leading-5 text-slate-600">
+                        {product.description
+                          ? product.description.length > 110
+                            ? `${product.description.slice(0, 110)}...`
+                            : product.description
+                          : 'No product description provided.'}
+                      </p>
 
                       <div className="mt-3 flex items-center gap-2 rounded-xl bg-slate-50 p-2.5">
                         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-orange-700">

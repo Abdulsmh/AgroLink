@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
+  Home,
   LayoutDashboard,
   Package,
   Truck,
@@ -89,7 +90,6 @@ export const ProducerLayout = () => {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-slate-100 font-sans">
-
       {/* Mobile Backdrop */}
       {isSidebarOpen && (
         <button
@@ -108,35 +108,35 @@ export const ProducerLayout = () => {
           bg-emerald-950 text-white
           shadow-2xl
           transition-transform duration-300 ease-in-out
-
           lg:static
           lg:z-auto
           lg:w-72
           lg:translate-x-0
           lg:shadow-none
-
           ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
       >
-
         {/* Sidebar Header */}
         <div className="flex h-20 shrink-0 items-center justify-between border-b border-emerald-900 px-5">
-
-          <div className="flex items-center gap-3">
+          {/* Clickable Logo */}
+          <NavLink
+            to="/"
+            onClick={closeSidebar}
+            aria-label="Go to AgroLink homepage"
+            className="flex items-center gap-3 rounded-xl outline-none transition hover:opacity-90 focus:ring-2 focus:ring-emerald-400"
+          >
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 shadow-lg shadow-emerald-600/20">
               <Sprout className="h-5 w-5 text-white" />
             </div>
 
             <div>
-              <h1 className="text-base font-bold text-white">
-                AgroLink
-              </h1>
+              <h1 className="text-base font-bold text-white">AgroLink</h1>
 
               <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
                 Producer Portal
               </p>
             </div>
-          </div>
+          </NavLink>
 
           {/* Mobile Close Button */}
           <button
@@ -152,7 +152,6 @@ export const ProducerLayout = () => {
         {/* Producer Information */}
         <div className="shrink-0 border-b border-emerald-900 p-4">
           <div className="rounded-xl bg-emerald-900/70 p-4">
-
             <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
               Producer Account
             </p>
@@ -192,7 +191,6 @@ export const ProducerLayout = () => {
 
         {/* Navigation */}
         <nav className="producer-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
-
           <p className="mb-3 px-2 text-[10px] font-bold uppercase tracking-widest text-emerald-500">
             Producer Workspace
           </p>
@@ -211,7 +209,6 @@ export const ProducerLayout = () => {
                       group flex items-center gap-3 rounded-xl px-3 py-3
                       text-sm font-semibold
                       transition-all duration-200
-
                       ${
                         isActive
                           ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
@@ -222,9 +219,7 @@ export const ProducerLayout = () => {
                 >
                   <Icon className="h-5 w-5 shrink-0 transition-transform duration-200 group-hover:scale-105" />
 
-                  <span className="truncate">
-                    {item.name}
-                  </span>
+                  <span className="truncate">{item.name}</span>
                 </NavLink>
               );
             })}
@@ -240,21 +235,22 @@ export const ProducerLayout = () => {
           >
             <LogOut className="h-5 w-5 shrink-0 transition-transform duration-200 group-hover:-translate-x-0.5" />
 
-            <span>
-              Logout
-            </span>
+            <span>Logout</span>
           </button>
         </div>
       </aside>
 
       {/* Main Application Area */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-
         {/* Mobile Header */}
         <header className="flex h-16 shrink-0 items-center border-b border-slate-200 bg-white px-4 shadow-sm lg:hidden">
-
-          {/* Logo — Left */}
-          <div className="flex items-center gap-2">
+          {/* Clickable Mobile Logo */}
+          <NavLink
+            to="/"
+            onClick={closeSidebar}
+            aria-label="Go to AgroLink homepage"
+            className="flex items-center gap-2 rounded-lg outline-none focus:ring-2 focus:ring-emerald-400"
+          >
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600">
               <Sprout className="h-4 w-4 text-white" />
             </div>
@@ -268,9 +264,9 @@ export const ProducerLayout = () => {
                 Producer Portal
               </p>
             </div>
-          </div>
+          </NavLink>
 
-          {/* Hamburger — Right */}
+          {/* Hamburger */}
           <button
             type="button"
             onClick={() => setIsSidebarOpen(true)}
@@ -283,11 +279,9 @@ export const ProducerLayout = () => {
 
         {/* Page Content */}
         <main className="producer-main-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-
           <div className="w-full px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
             <Outlet />
           </div>
-
         </main>
       </div>
 

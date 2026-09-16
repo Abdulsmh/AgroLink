@@ -15,6 +15,7 @@ const emptyForm = {
   price_per_unit: '',
   location: '',
   product_type: 'post_harvest',
+  description: '',
 };
 
 const formatCurrency = (value) =>
@@ -94,7 +95,7 @@ export const ProducerListings = () => {
     const { data, error } = await supabase
       .from('products')
       .select(
-        'id, producer_id, crop_name, quantity, unit, price_per_unit, location, image_path, product_type, created_at'
+        'id, producer_id, crop_name, quantity, unit, price_per_unit, location, description, image_path, product_type, created_at'
       )
       .eq('producer_id', user.id)
       .order('created_at', { ascending: false });
@@ -180,6 +181,7 @@ export const ProducerListings = () => {
       price_per_unit: String(product.price_per_unit ?? ''),
       location: product.location || '',
       product_type: product.product_type || 'post_harvest',
+      description: product.description || '',
     });
 
     setExistingImagePaths(parseImagePaths(product.image_path));
@@ -357,6 +359,7 @@ export const ProducerListings = () => {
             price_per_unit: pricePerUnit,
             location: form.location.trim() || null,
             product_type: form.product_type,
+            description: form.description.trim() || null,
             image_path: JSON.stringify([]),
           })
           .select('id')
@@ -386,6 +389,7 @@ export const ProducerListings = () => {
           price_per_unit: pricePerUnit,
           location: form.location.trim() || null,
           product_type: form.product_type,
+          description: form.description.trim() || null,
           image_path: JSON.stringify(finalImagePaths),
         })
         .eq('id', productId)
@@ -586,6 +590,12 @@ export const ProducerListings = () => {
                     <p className="mt-1 text-sm text-slate-500">
                       {product.location || 'Where is it located? not specified'}
                     </p>
+
+                    {product.description && (
+                      <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">
+                        {product.description}
+                      </p>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-sm">
@@ -629,9 +639,9 @@ export const ProducerListings = () => {
       )}
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4">
-          <div className="my-8 w-full max-w-2xl rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <div className="my-4 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">
                   {editingProduct ? 'Edit farm product' : 'Add a farm product'}
@@ -742,6 +752,24 @@ export const ProducerListings = () => {
                     className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                     required
                   />
+                </label>
+
+                <label className="block text-sm font-semibold text-slate-700 sm:col-span-2">
+                  Product description
+
+                  <textarea
+                    name="description"
+                    value={form.description}
+                    onChange={handleInputChange}
+                    maxLength={1000}
+                    rows={4}
+                    placeholder="Describe the quality, variety, freshness, packaging, or other useful details buyers should know..."
+                    className="mt-2 w-full resize-y rounded-xl border border-slate-200 px-4 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                  />
+
+                  <span className="mt-1 block text-xs font-normal text-slate-500">
+                    Optional. Maximum 1,000 characters.
+                  </span>
                 </label>
               </div>
 

@@ -173,6 +173,12 @@ const ProductCard = ({
               {product.location}
             </p>
           )}
+
+          {product.description && (
+            <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+              {product.description}
+            </p>
+          )}
         </div>
 
         <div className="flex items-end justify-between gap-2">
@@ -393,10 +399,9 @@ const ProductModal = ({
                 {product.crop_name}
               </h2>
 
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                No detailed product description has been added by the
-                producer yet. Contact the producer for more information
-                about quality, variety, packaging, and availability.
+              <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
+                {product.description?.trim() ||
+                  'No detailed product description has been added by the producer yet. Contact the producer for more information about quality, variety, packaging, and availability.'}
               </p>
             </div>
 
@@ -559,7 +564,7 @@ const Catalog = () => {
       const { data: productRows, error: productsError } = await supabase
         .from('products')
         .select(
-          'id, producer_id, crop_name, quantity, unit, price_per_unit, location, image_path, product_type, created_at'
+          'id, producer_id, crop_name, description, quantity, unit, price_per_unit, location, image_path, product_type, created_at'
         )
         .order('created_at', { ascending: false });
 
@@ -723,6 +728,7 @@ const Catalog = () => {
     unit: product.unit || 'unit',
     pricePerUnit: Number(product.price_per_unit || 0),
     location: product.location || '',
+    description: product.description || '',
     productType: product.product_type || 'post_harvest',
     imagePath: getProductImages(product.image_path),
     producerName: getProducerName(product.producer),
