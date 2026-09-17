@@ -1,4 +1,3 @@
-
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../config/supabaseClient';
@@ -114,13 +113,14 @@ export const ProducerListings = () => {
     loadProducts();
   }, [user?.id]);
 
+  // Clean up image previews only when the component is unmounted.
   useEffect(() => {
     return () => {
       selectedImages.forEach((image) => {
         URL.revokeObjectURL(image.previewUrl);
       });
     };
-  }, [selectedImages]);
+  }, []);
 
   const filteredProducts = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -151,27 +151,41 @@ export const ProducerListings = () => {
     0
   );
 
-  const resetModal = () => {
-    selectedImages.forEach((image) => {
-      URL.revokeObjectURL(image.previewUrl);
+  const revokeSelectedImagePreviews = (images) => {
+    images.forEach((image) => {
+      if (image.previewUrl) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
     });
+  };
 
-    setForm(emptyForm);
+  const resetModal = () => {
+    revokeSelectedImagePreviews(selectedImages);
+
+    setForm({ ...emptyForm });
     setSelectedImages([]);
     setExistingImagePaths([]);
     setEditingProduct(null);
     setIsModalOpen(false);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const openCreateModal = () => {
+    revokeSelectedImagePreviews(selectedImages);
+
     setEditingProduct(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm });
     setExistingImagePaths([]);
     setSelectedImages([]);
     setIsModalOpen(true);
   };
 
   const openEditModal = (product) => {
+    revokeSelectedImagePreviews(selectedImages);
+
     setEditingProduct(product);
 
     setForm({
@@ -201,6 +215,7 @@ export const ProducerListings = () => {
   const handleImageSelection = (event) => {
     const files = Array.from(event.target.files || []);
 
+    // Reset the input so the same image can be selected again.
     event.target.value = '';
 
     if (!files.length) return;
@@ -236,7 +251,7 @@ export const ProducerListings = () => {
     setSelectedImages((current) => {
       const image = current.find((item) => item.id === imageId);
 
-      if (image) {
+      if (image?.previewUrl) {
         URL.revokeObjectURL(image.previewUrl);
       }
 
@@ -573,7 +588,9 @@ export const ProducerListings = () => {
                   )}
 
                   <span className="absolute right-3 top-3 rounded-full bg-slate-900/80 px-3 py-1 text-xs font-bold text-white">
-                    {product.product_type === 'pre_harvest' ? 'Pre-harvest' : 'Ready harvest'}
+                    {product.product_type === 'pre_harvest'
+                      ? 'Pre-harvest'
+                      : 'Ready harvest'}
                   </span>
 
                   <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-bold text-emerald-700">
@@ -714,10 +731,17 @@ export const ProducerListings = () => {
                     onChange={handleInputChange}
                     className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 font-normal outline-none focus:border-emerald-500"
                   >
-                    <option value="post_harvest">Ready harvest / already available</option>
-                    <option value="pre_harvest">Pre-harvest / booking before harvest</option>
+                    <option value="post_harvest">
+                      Ready harvest / already available
+                    </option>
+                    <option value="pre_harvest">
+                      Pre-harvest / booking before harvest
+                    </option>
                   </select>
-                  <span className="mt-1 block text-xs font-normal text-slate-500">Choose ready products or products buyers can book before harvest.</span>
+
+                  <span className="mt-1 block text-xs font-normal text-slate-500">
+                    Choose ready products or products buyers can book before harvest.
+                  </span>
                 </label>
 
                 <label className="block text-sm font-semibold text-slate-700">
@@ -801,12 +825,13 @@ export const ProducerListings = () => {
 
                 <input
                   ref={fileInputRef}
+                  id="product-images"
                   type="file"
                   accept="image/*"
                   multiple
-                  capture="environment"
                   onChange={handleImageSelection}
-                  className="hidden"
+                  className="absolute h-px w-px overflow-hidden opacity-0"
+                  tabIndex="-1"
                 />
 
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
