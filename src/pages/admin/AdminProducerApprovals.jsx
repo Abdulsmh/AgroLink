@@ -24,20 +24,20 @@ import { supabase } from '../../config/supabaseClient';
 import { toast } from 'react-hot-toast';
 
 export const AdminProducerApprovals = () => {
-  const [producers, setProducers] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedProducer, setSelectedProducer] = useState(null);
+  const [selectedAccount, setSelectedAccount] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
 
   useEffect(() => {
-    fetchProducers();
+    fetchAccounts();
   }, []);
 
-  const fetchProducers = async () => {
+  const fetchAccounts = async () => {
     try {
       setLoading(true);
 
@@ -65,10 +65,10 @@ export const AdminProducerApprovals = () => {
 
       if (error) throw error;
 
-      setProducers(data || []);
+      setAccounts(data || []);
     } catch (error) {
-      console.error('Error loading producers:', error);
-      toast.error('Failed to load producer verification requests.');
+      console.error('Error loading verification accounts:', error);
+      toast.error('Failed to load verification requests.');
     } finally {
       setLoading(false);
     }
@@ -95,22 +95,22 @@ export const AdminProducerApprovals = () => {
       );
 
       setConfirmation(null);
-      setSelectedProducer(null);
+      setSelectedAccount(null);
 
-      await fetchProducers();
+      await fetchAccounts();
     } catch (error) {
-      console.error('Error updating producer status:', error);
+      console.error('Error updating verification status:', error);
       toast.error('Failed to update account status.');
     } finally {
       setUpdatingId(null);
     }
   };
 
-  const filteredProducers = useMemo(() => {
+  const filteredAccounts = useMemo(() => {
     const search = searchTerm.trim().toLowerCase();
 
-    return producers.filter((producer) => {
-      const status = producer.verification_status || 'pending';
+    return accounts.filter((account) => {
+      const status = account.verification_status || 'pending';
 
       const matchesStatus =
         statusFilter === 'all' || status === statusFilter;
@@ -120,42 +120,43 @@ export const AdminProducerApprovals = () => {
       if (!search) return true;
 
       return [
-        producer.full_name,
-        producer.phone_number,
-        producer.role,
-        producer.lga_location,
-        producer.farm_name,
-        producer.business_name,
-        producer.farm_location,
+        account.full_name,
+        account.phone_number,
+        account.role,
+        account.lga_location,
+        account.farm_name,
+        account.business_name,
+        account.farm_location,
+        account.business_address,
       ]
         .filter(Boolean)
         .some((value) =>
           String(value).toLowerCase().includes(search)
         );
     });
-  }, [producers, searchTerm, statusFilter]);
+  }, [accounts, searchTerm, statusFilter]);
 
   const summary = useMemo(() => {
     return {
-      total: producers.length,
-      pending: producers.filter(
-        (producer) =>
-          (producer.verification_status || 'pending') === 'pending'
+      total: accounts.length,
+      pending: accounts.filter(
+        (account) =>
+          (account.verification_status || 'pending') === 'pending'
       ).length,
-      approved: producers.filter(
-        (producer) =>
-          producer.verification_status === 'approved'
+      approved: accounts.filter(
+        (account) =>
+          account.verification_status === 'approved'
       ).length,
-      rejected: producers.filter(
-        (producer) =>
-          producer.verification_status === 'rejected'
+      rejected: accounts.filter(
+        (account) =>
+          account.verification_status === 'rejected'
       ).length,
     };
-  }, [producers]);
+  }, [accounts]);
 
-  const requestStatusChange = (producer, newStatus) => {
+  const requestStatusChange = (account, newStatus) => {
     setConfirmation({
-      producer,
+      account,
       newStatus,
     });
   };
@@ -184,7 +185,7 @@ export const AdminProducerApprovals = () => {
             </div>
 
             <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
-              Producer Approvals
+              Account Verification
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
@@ -195,7 +196,7 @@ export const AdminProducerApprovals = () => {
 
           <button
             type="button"
-            onClick={fetchProducers}
+            onClick={fetchAccounts}
             disabled={loading}
             className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 lg:self-auto"
           >
@@ -253,7 +254,8 @@ export const AdminProducerApprovals = () => {
 
           <p className="mt-1 leading-6 text-blue-700/80">
             Approving or rejecting an account updates its verification
-            status in the producer profile.
+            status in the user's AgroLink profile. Only authorized
+            administrators can change this status.
           </p>
         </div>
       </div>
@@ -304,11 +306,11 @@ export const AdminProducerApprovals = () => {
           <span>
             Showing{' '}
             <strong className="text-slate-700">
-              {filteredProducers.length}
+              {filteredAccounts.length}
             </strong>{' '}
             of{' '}
             <strong className="text-slate-700">
-              {producers.length}
+              {accounts.length}
             </strong>{' '}
             accounts
           </span>
@@ -321,11 +323,11 @@ export const AdminProducerApprovals = () => {
         </div>
       </section>
 
-      {/* Producer list */}
+      {/* Verification list */}
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         {loading ? (
           <LoadingState />
-        ) : filteredProducers.length === 0 ? (
+        ) : filteredAccounts.length === 0 ? (
           <EmptyState
             hasFilters={Boolean(
               searchTerm || statusFilter !== 'all'
@@ -339,7 +341,7 @@ export const AdminProducerApprovals = () => {
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    <th className="p-4">Producer</th>
+                    <th className="p-4">Account</th>
                     <th className="p-4">Location</th>
                     <th className="p-4">Role</th>
                     <th className="p-4">Status</th>
@@ -348,16 +350,16 @@ export const AdminProducerApprovals = () => {
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {filteredProducers.map((producer, index) => {
+                  {filteredAccounts.map((account, index) => {
                     const status =
-                      producer.verification_status || 'pending';
+                      account.verification_status || 'pending';
 
                     const isUpdating =
-                      updatingId === producer.id;
+                      updatingId === account.id;
 
                     return (
                       <tr
-                        key={producer.id}
+                        key={account.id}
                         className="group transition duration-200 hover:bg-slate-50"
                         style={{
                           animation: `fadeUp 0.35s ease-out ${
@@ -368,20 +370,20 @@ export const AdminProducerApprovals = () => {
                         <td className="p-4">
                           <div className="flex items-center gap-3">
                             <Avatar
-                              name={producer.full_name}
+                              name={account.full_name}
                             />
 
                             <div className="min-w-0">
                               <p className="truncate font-bold text-slate-900">
-                                {producer.full_name ||
+                                {account.full_name ||
                                   'Unnamed User'}
                               </p>
 
                               <p className="mt-0.5 truncate text-xs text-slate-400">
-                                {producer.business_name ||
-                                  producer.farm_name ||
-                                  producer.phone_number ||
-                                  'Producer account'}
+                                {account.business_name ||
+                                  account.farm_name ||
+                                  account.phone_number ||
+                                  'AgroLink account'}
                               </p>
                             </div>
                           </div>
@@ -392,16 +394,16 @@ export const AdminProducerApprovals = () => {
                             <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
 
                             <span className="truncate">
-                              {producer.lga_location ||
-                                producer.farm_location ||
-                                producer.business_address ||
+                              {account.lga_location ||
+                                account.farm_location ||
+                                account.business_address ||
                                 'Kano State'}
                             </span>
                           </div>
                         </td>
 
                         <td className="p-4">
-                          <RoleBadge role={producer.role} />
+                          <RoleBadge role={account.role} />
                         </td>
 
                         <td className="p-4">
@@ -413,7 +415,7 @@ export const AdminProducerApprovals = () => {
                             <button
                               type="button"
                               onClick={() =>
-                                setSelectedProducer(producer)
+                                setSelectedAccount(account)
                               }
                               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
                             >
@@ -429,7 +431,7 @@ export const AdminProducerApprovals = () => {
                               }
                               onClick={() =>
                                 requestStatusChange(
-                                  producer,
+                                  account,
                                   'approved'
                                 )
                               }
@@ -443,7 +445,7 @@ export const AdminProducerApprovals = () => {
                               }
                               onClick={() =>
                                 requestStatusChange(
-                                  producer,
+                                  account,
                                   'rejected'
                                 )
                               }
@@ -468,16 +470,16 @@ export const AdminProducerApprovals = () => {
 
             {/* Mobile / tablet cards */}
             <div className="grid grid-cols-1 gap-3 p-4 lg:hidden">
-              {filteredProducers.map((producer, index) => {
+              {filteredAccounts.map((account, index) => {
                 const status =
-                  producer.verification_status || 'pending';
+                  account.verification_status || 'pending';
 
                 const isUpdating =
-                  updatingId === producer.id;
+                  updatingId === account.id;
 
                 return (
                   <div
-                    key={producer.id}
+                    key={account.id}
                     className="rounded-2xl border border-slate-200 bg-white p-4 transition duration-300 hover:-translate-y-0.5 hover:shadow-md"
                     style={{
                       animation: `fadeUp 0.35s ease-out ${
@@ -488,20 +490,20 @@ export const AdminProducerApprovals = () => {
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <Avatar
-                          name={producer.full_name}
+                          name={account.full_name}
                         />
 
                         <div className="min-w-0">
                           <p className="truncate font-bold text-slate-900">
-                            {producer.full_name ||
+                            {account.full_name ||
                               'Unnamed User'}
                           </p>
 
                           <p className="mt-0.5 truncate text-xs text-slate-400">
-                            {producer.business_name ||
-                              producer.farm_name ||
-                              producer.phone_number ||
-                              'Producer account'}
+                            {account.business_name ||
+                              account.farm_name ||
+                              account.phone_number ||
+                              'AgroLink account'}
                           </p>
                         </div>
                       </div>
@@ -514,9 +516,9 @@ export const AdminProducerApprovals = () => {
                         icon={MapPin}
                         label="Location"
                         value={
-                          producer.lga_location ||
-                          producer.farm_location ||
-                          producer.business_address ||
+                          account.lga_location ||
+                          account.farm_location ||
+                          account.business_address ||
                           'Kano State'
                         }
                       />
@@ -524,7 +526,7 @@ export const AdminProducerApprovals = () => {
                       <InfoItem
                         icon={ShieldCheck}
                         label="Role"
-                        value={formatRole(producer.role)}
+                        value={formatRole(account.role)}
                       />
                     </div>
 
@@ -532,7 +534,7 @@ export const AdminProducerApprovals = () => {
                       <button
                         type="button"
                         onClick={() =>
-                          setSelectedProducer(producer)
+                          setSelectedAccount(account)
                         }
                         className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 sm:flex-none"
                       >
@@ -548,7 +550,7 @@ export const AdminProducerApprovals = () => {
                         }
                         onClick={() =>
                           requestStatusChange(
-                            producer,
+                            account,
                             'approved'
                           )
                         }
@@ -563,7 +565,7 @@ export const AdminProducerApprovals = () => {
                         }
                         onClick={() =>
                           requestStatusChange(
-                            producer,
+                            account,
                             'rejected'
                           )
                         }
@@ -579,27 +581,27 @@ export const AdminProducerApprovals = () => {
       </section>
 
       {/* Detail modal */}
-      {selectedProducer && (
+      {selectedAccount && (
         <ProducerDetailsModal
-          producer={selectedProducer}
-          onClose={() => setSelectedProducer(null)}
+          producer={selectedAccount}
+          onClose={() => setSelectedAccount(null)}
           onApprove={() =>
-            requestStatusChange(selectedProducer, 'approved')
+            requestStatusChange(selectedAccount, 'approved')
           }
           onReject={() =>
-            requestStatusChange(selectedProducer, 'rejected')
+            requestStatusChange(selectedAccount, 'rejected')
           }
-          updating={updatingId === selectedProducer.id}
+          updating={updatingId === selectedAccount.id}
         />
       )}
 
       {/* Confirmation modal */}
       {confirmation && (
         <ConfirmationModal
-          producer={confirmation.producer}
+          producer={confirmation.account}
           newStatus={confirmation.newStatus}
           loading={
-            updatingId === confirmation.producer.id
+            updatingId === confirmation.account.id
           }
           onCancel={() => {
             if (!updatingId) {
@@ -608,7 +610,7 @@ export const AdminProducerApprovals = () => {
           }}
           onConfirm={() =>
             handleStatusUpdate(
-              confirmation.producer.id,
+              confirmation.account.id,
               confirmation.newStatus
             )
           }
@@ -786,7 +788,7 @@ const InfoItem = ({ icon: Icon, label, value }) => {
 };
 
 /* ---------------------------------------------
-   Producer Details Modal
+   Account Details Modal
 --------------------------------------------- */
 
 const ProducerDetailsModal = ({
@@ -798,6 +800,8 @@ const ProducerDetailsModal = ({
 }) => {
   const status =
     producer.verification_status || 'pending';
+
+  const isAggregator = producer.role === 'aggregator';
 
   return (
     <ModalShell onClose={onClose}>
@@ -841,41 +845,65 @@ const ProducerDetailsModal = ({
             value={producer.lga_location}
           />
 
-          <DetailItem
-            icon={Sprout}
-            label="Farm name"
-            value={producer.farm_name}
-          />
+          {isAggregator ? (
+            <>
+              <DetailItem
+                icon={Building2}
+                label="Business / Organization"
+                value={producer.business_name}
+              />
 
-          <DetailItem
-            icon={MapPin}
-            label="Farm location"
-            value={producer.farm_location}
-          />
+              <DetailItem
+                icon={MapPin}
+                label="Business address"
+                value={producer.business_address}
+              />
 
-          <DetailItem
-            icon={Sprout}
-            label="Farm size"
-            value={producer.farm_size}
-          />
+              <DetailItem
+                icon={Users}
+                label="Community / Area"
+                value={producer.lga_location}
+              />
+            </>
+          ) : (
+            <>
+              <DetailItem
+                icon={Sprout}
+                label="Farm name"
+                value={producer.farm_name}
+              />
 
-          <DetailItem
-            icon={Sprout}
-            label="Farm type"
-            value={producer.farm_type}
-          />
+              <DetailItem
+                icon={MapPin}
+                label="Farm location"
+                value={producer.farm_location}
+              />
 
-          <DetailItem
-            icon={Building2}
-            label="Business name"
-            value={producer.business_name}
-          />
+              <DetailItem
+                icon={Sprout}
+                label="Farm size"
+                value={producer.farm_size}
+              />
 
-          <DetailItem
-            icon={MapPin}
-            label="Business address"
-            value={producer.business_address}
-          />
+              <DetailItem
+                icon={Sprout}
+                label="Farm type"
+                value={producer.farm_type}
+              />
+
+              <DetailItem
+                icon={Building2}
+                label="Business name"
+                value={producer.business_name}
+              />
+
+              <DetailItem
+                icon={MapPin}
+                label="Business address"
+                value={producer.business_address}
+              />
+            </>
+          )}
 
           <DetailItem
             icon={CalendarDays}
@@ -942,6 +970,10 @@ const ConfirmationModal = ({
   onConfirm,
 }) => {
   const isApprove = newStatus === 'approved';
+  const accountType =
+    producer.role === 'aggregator'
+      ? 'aggregator'
+      : 'producer';
 
   return (
     <ModalShell onClose={onCancel}>
@@ -963,8 +995,8 @@ const ConfirmationModal = ({
         <div className="mt-5 text-center">
           <h2 className="text-lg font-black text-slate-900">
             {isApprove
-              ? 'Approve this producer?'
-              : 'Reject this producer?'}
+              ? `Approve this ${accountType}?`
+              : `Reject this ${accountType}?`}
           </h2>
 
           <p className="mt-2 text-sm leading-6 text-slate-500">
@@ -974,13 +1006,13 @@ const ConfirmationModal = ({
             </strong>{' '}
             the verification status for{' '}
             <strong className="text-slate-700">
-              {producer.full_name || 'this producer'}
+              {producer.full_name || `this ${accountType}`}
             </strong>
             .
           </p>
 
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            This action changes the producer's verification status
+            This action changes the account's verification status
             on AgroLink.
           </p>
         </div>
@@ -1088,8 +1120,8 @@ const EmptyState = ({ hasFilters, clearFilters }) => {
 
       <h2 className="mt-4 font-black text-slate-800">
         {hasFilters
-          ? 'No matching producers'
-          : 'No producer accounts found'}
+          ? 'No matching accounts'
+          : 'No verification accounts found'}
       </h2>
 
       <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">

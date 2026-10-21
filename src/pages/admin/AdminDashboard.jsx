@@ -3,7 +3,6 @@ import {
   Users,
   Wheat,
   ShoppingCart,
-  Loader2,
   ArrowUpRight,
   TrendingUp,
   RefreshCw,
@@ -16,7 +15,6 @@ import {
   CheckCircle2,
   XCircle,
   PackageCheck,
-  CircleDollarSign,
   ChevronRight,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -30,7 +28,7 @@ export function AdminDashboard() {
     usersCount: 0,
     listingsCount: 0,
     ordersCount: 0,
-    pendingProducers: 0,
+    pendingAccounts: 0,
     activeOrders: 0,
     completedOrders: 0,
   });
@@ -47,7 +45,7 @@ export function AdminDashboard() {
         { count: usersCount, error: usersError },
         { count: listingsCount, error: listingsError },
         { count: ordersCount, error: ordersError },
-        { count: pendingProducers, error: pendingError },
+        { count: pendingAccounts, error: pendingError },
         { count: activeOrders, error: activeOrdersError },
         { count: completedOrders, error: completedOrdersError },
       ] = await Promise.all([
@@ -63,10 +61,11 @@ export function AdminDashboard() {
           .from('orders')
           .select('*', { count: 'exact', head: true }),
 
+        // Pending verification for both producers and aggregators
         supabase
           .from('profiles')
           .select('*', { count: 'exact', head: true })
-          .eq('role', 'producer')
+          .in('role', ['producer', 'aggregator'])
           .eq('verification_status', 'pending'),
 
         supabase
@@ -91,7 +90,7 @@ export function AdminDashboard() {
         usersCount: usersCount || 0,
         listingsCount: listingsCount || 0,
         ordersCount: ordersCount || 0,
-        pendingProducers: pendingProducers || 0,
+        pendingAccounts: pendingAccounts || 0,
         activeOrders: activeOrders || 0,
         completedOrders: completedOrders || 0,
       });
@@ -168,8 +167,9 @@ export function AdminDashboard() {
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Monitor marketplace activity, producer verification,
-              orders, and agricultural operations across AgroLink.
+              Monitor marketplace activity, producer and aggregator
+              verification, orders, and agricultural operations across
+              AgroLink.
             </p>
           </div>
 
@@ -275,15 +275,15 @@ export function AdminDashboard() {
       <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <ActivityCard
           icon={UserCheck}
-          title="Producer Reviews"
-          value={stats.pendingProducers}
+          title="Account Verification"
+          value={stats.pendingAccounts}
           description={
-            stats.pendingProducers === 1
-              ? 'producer waiting for review'
-              : 'producers waiting for review'
+            stats.pendingAccounts === 1
+              ? 'account waiting for verification'
+              : 'accounts waiting for verification'
           }
           link="/admin/approvals"
-          linkText="Review producers"
+          linkText="Review accounts"
           iconStyle="bg-emerald-50 text-emerald-600"
           loading={isLoading}
         />
@@ -338,17 +338,17 @@ export function AdminDashboard() {
           <QuickAction
             to="/admin/approvals"
             icon={UserCheck}
-            title="Producer Approvals"
-            description="Review and manage producer verification."
+            title="Account Verification"
+            description="Review and manage producer and aggregator verification."
             iconStyle="bg-emerald-50 text-emerald-600"
             borderStyle="hover:border-emerald-300"
             badge={
-              stats.pendingProducers > 0
-                ? `${stats.pendingProducers} pending`
+              stats.pendingAccounts > 0
+                ? `${stats.pendingAccounts} pending`
                 : 'Up to date'
             }
             badgeStyle={
-              stats.pendingProducers > 0
+              stats.pendingAccounts > 0
                 ? 'bg-amber-50 text-amber-700'
                 : 'bg-emerald-50 text-emerald-700'
             }
@@ -426,8 +426,8 @@ export function AdminDashboard() {
             />
 
             <ProgressRow
-              label="Pending producer reviews"
-              value={stats.pendingProducers}
+              label="Pending account verification"
+              value={stats.pendingAccounts}
               total={stats.usersCount}
               icon={UserCheck}
               iconStyle="text-amber-600"
@@ -455,8 +455,8 @@ export function AdminDashboard() {
           <div className="mt-5 space-y-3">
             <AttentionItem
               icon={UserCheck}
-              title="Producer verification"
-              value={stats.pendingProducers}
+              title="Account verification"
+              value={stats.pendingAccounts}
               description="pending"
               to="/admin/approvals"
               iconStyle="bg-emerald-50 text-emerald-600"
@@ -503,10 +503,10 @@ export function AdminDashboard() {
             </h2>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-emerald-100/75">
-              Monitor producer verification, marketplace activity,
-              and order fulfillment across AgroLink. Keep the platform
-              reliable for farmers, buyers, and other marketplace
-              participants.
+              Monitor producer and aggregator verification,
+              marketplace activity, and order fulfillment across
+              AgroLink. Keep the platform reliable for farmers,
+              buyers, aggregators, and other marketplace participants.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-3">
@@ -514,7 +514,7 @@ export function AdminDashboard() {
                 to="/admin/approvals"
                 className="group inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-400"
               >
-                Review Producers
+                Review Accounts
                 <ArrowUpRight className="h-4 w-4 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
               </Link>
 
@@ -545,8 +545,8 @@ export function AdminDashboard() {
             />
 
             <MiniDarkStat
-              label="Pending"
-              value={stats.pendingProducers}
+              label="Pending Verification"
+              value={stats.pendingAccounts}
             />
           </div>
         </div>

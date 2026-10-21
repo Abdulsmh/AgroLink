@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard,
   UserCheck,
+  UserPlus,
   Users,
   Truck,
   TrendingUp,
@@ -27,7 +28,12 @@ export const AdminLayout = () => {
       icon: LayoutDashboard,
     },
     {
-      name: 'Producer Approvals',
+      name: 'Role Requests',
+      path: '/admin/role-requests',
+      icon: UserPlus,
+    },
+    {
+      name: 'Account Verification',
       path: '/admin/approvals',
       icon: UserCheck,
     },
@@ -116,9 +122,22 @@ export const AdminLayout = () => {
             aria-label="Go to AgroLink homepage"
             className="flex items-center gap-3 rounded-xl outline-none transition hover:opacity-90 focus:ring-2 focus:ring-emerald-400"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 shadow-lg shadow-emerald-600/20">
-              <ShieldCheck className="h-5 w-5 text-white" />
-            </div>
+            <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-emerald-600 shadow-lg shadow-emerald-600/20 transition duration-300 group-hover:rotate-6 group-hover:scale-105">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="130 85 250 250"
+                  className="h-9 w-9 text-white"
+                  fill="currentColor"
+                  aria-label="AgroLink logo"
+                >
+                  <path d="M170 150C195 112 275 98 347 148C300 188 215 192 170 150Z" />
+
+                  <path d="M160 165C148 232 185 300 240 324C256 272 246 230 214 192C196 177 178 169 160 165Z" />
+
+                  <path d="M358 172C372 240 330 306 268 324C258 272 270 230 300 196C320 185 340 178 358 172Z" />
+                </svg>
+              </div>
+
 
             <div>
               <h1 className="text-base font-bold text-white">

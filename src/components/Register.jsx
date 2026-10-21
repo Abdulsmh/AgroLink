@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -8,7 +9,6 @@ import {
   LockKeyhole,
   Mail,
   Phone,
-  Sprout,
   UserRound,
   MapPin,
   Building2,
@@ -58,6 +58,24 @@ const FieldLabel = ({ children, required = false }) => {
     </label>
   );
 };
+
+// Reusable AgroLink SVG logo from AdminLayout.jsx.
+const AgroLinkLogo = ({ className = 'h-11 w-11' }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="130 85 250 250"
+    className={className}
+    fill="currentColor"
+    role="img"
+    aria-label="AgroLink logo"
+  >
+    <path d="M170 150C195 112 275 98 347 148C300 188 215 192 170 150Z" />
+
+    <path d="M160 165C148 232 185 300 240 324C256 272 246 230 214 192C196 177 178 169 160 165Z" />
+
+    <path d="M358 172C372 240 330 306 268 324C258 272 270 230 300 196C320 185 340 178 358 172Z" />
+  </svg>
+);
 
 const IconInput = ({
   id,
@@ -288,10 +306,9 @@ export const Register = () => {
 
       toast.success('Account created successfully.');
 
-      if (
-        formData.role === 'producer' ||
-        formData.role === 'aggregator'
-      ) {
+      if (formData.role === 'aggregator') {
+        navigate('/aggregator/dashboard', { replace: true });
+      } else if (formData.role === 'producer') {
         navigate('/producer/dashboard', { replace: true });
       } else {
         navigate('/buyer/dashboard', { replace: true });
@@ -310,9 +327,13 @@ export const Register = () => {
         {/* Brand panel */}
         <section className="hidden flex-col justify-between bg-gradient-to-br from-emerald-700 via-emerald-800 to-slate-950 p-10 text-white lg:flex">
           <div>
-            <Link to="/" className="inline-flex items-center gap-3">
-              <span className="rounded-2xl bg-white/15 p-3">
-                <Sprout size={28} />
+            <Link
+              to="/"
+              aria-label="AgroLink homepage"
+              className="inline-flex items-center gap-3 rounded-xl outline-none transition hover:opacity-90 focus:ring-2 focus:ring-emerald-400"
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 shadow-lg shadow-emerald-950/20">
+                <AgroLinkLogo className="h-11 w-11 text-white" />
               </span>
 
               <span className="text-2xl font-black tracking-tight">
@@ -359,9 +380,14 @@ export const Register = () => {
         <section className="p-6 sm:p-10 lg:p-12">
           <div className="mx-auto max-w-2xl">
             <div className="mb-8">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 lg:hidden">
-                <Sprout size={30} />
-              </div>
+              {/* Mobile AgroLink logo */}
+              <Link
+                to="/"
+                aria-label="AgroLink homepage"
+                className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 shadow-lg shadow-emerald-600/20 outline-none transition hover:bg-emerald-700 focus:ring-4 focus:ring-emerald-100 lg:hidden"
+              >
+                <AgroLinkLogo className="h-11 w-11 text-white" />
+              </Link>
 
               <p className="text-sm font-bold uppercase tracking-[0.18em] text-emerald-600">
                 Account registration
@@ -409,11 +435,14 @@ export const Register = () => {
                   <option value="buyer">
                     Buyer / Retailer — Instant Access
                   </option>
+
                   <option value="producer">
                     Farmer / Producer — Requires Verification
                   </option>
+
                   <option value="aggregator">
-                    Aggregator / Field Agent — Requires Verification
+                    Aggregator / Community Representative — Requires
+                    Verification
                   </option>
                 </select>
 
@@ -425,7 +454,7 @@ export const Register = () => {
                     'Producer accounts require administrator verification before full marketplace access.'}
 
                   {formData.role === 'aggregator' &&
-                    'Aggregator accounts require administrator verification before full marketplace access.'}
+                    'Aggregator accounts can log in after registration, but aggregator operations remain restricted until an administrator approves the account.'}
                 </p>
               </div>
 

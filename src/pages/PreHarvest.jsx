@@ -1,39 +1,39 @@
-
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  CalendarDays,
+  ArrowRight,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Loader2,
+  Image as ImageIcon,
   MapPin,
   Minus,
+  Package,
   Plus,
   RefreshCw,
   Search,
-  ShieldCheck,
   ShoppingCart,
   Sprout,
-  UserRound,
   X,
-  Zap,
+  ShieldCheck,
+  UserRound,
+  Star,
+  MessageSquare,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../config/supabaseClient';
+import PreHarvestBookingModal from '../components/PreHarvestBookingModal';
 
 const CART_KEY = 'agrolink_cart';
 
-// -----------------------------
-// Formatting helpers
-// -----------------------------
+const formatNaira = (amount) =>
+  `₦${Number(amount || 0).toLocaleString('en-NG')}`;
+
+const formatNumber = (amount) =>
+  Number(amount || 0).toLocaleString('en-NG');
 
 const formatDate = (date) => {
-  if (!date) return 'Not specified';
+  if (!date) return 'Recently';
 
   return new Date(date).toLocaleDateString('en-NG', {
     day: 'numeric',
@@ -41,20 +41,6 @@ const formatDate = (date) => {
     year: 'numeric',
   });
 };
-
-const formatNumber = (value) => {
-  return new Intl.NumberFormat('en-NG').format(
-    Number(value || 0)
-  );
-};
-
-const formatCurrency = (value) => {
-  return `₦${formatNumber(value)}`;
-};
-
-// -----------------------------
-// Image helpers
-// -----------------------------
 
 const getProductImages = (imagePath) => {
   if (!imagePath) return [];
@@ -68,10 +54,7 @@ const getProductImages = (imagePath) => {
   try {
     const parsed = JSON.parse(imagePath);
 
-    if (Array.isArray(parsed)) {
-      return parsed.filter(Boolean);
-    }
-
+    if (Array.isArray(parsed)) return parsed.filter(Boolean);
     return parsed ? [parsed] : [];
   } catch {
     return [imagePath];
@@ -79,9 +62,7 @@ const getProductImages = (imagePath) => {
 };
 
 const getStorageImageUrl = (imagePath) => {
-  if (!imagePath || typeof imagePath !== 'string') {
-    return null;
-  }
+  if (!imagePath || typeof imagePath !== 'string') return null;
 
   if (
     imagePath.startsWith('http://') ||
@@ -101,1209 +82,1490 @@ const getStorageImageUrl = (imagePath) => {
   return data?.publicUrl || null;
 };
 
-// -----------------------------
-// Producer helpers
-// -----------------------------
+const getStockStatus = (quantity) => {
+  const stock = Number(quantity || 0);
 
-const getProducerName = (producer) => {
-  if (!producer) return 'AgroLink Producer';
-
-  return (
-    producer.business_name ||
-    producer.farm_name ||
-    producer.full_name ||
-    'AgroLink Producer'
-  );
-};
-
-// -----------------------------
-// Cart helpers
-// -----------------------------
-
-const getCart = () => {
-  try {
-    const storedCart = localStorage.getItem(CART_KEY);
-
-    if (!storedCart) return [];
-
-    const parsedCart = JSON.parse(storedCart);
-
-    return Array.isArray(parsedCart) ? parsedCart : [];
-  } catch (error) {
-    console.error('Unable to read AgroLink cart:', error);
-    return [];
-  }
-};
-
-const saveCart = (cart) => {
-  try {
-    localStorage.setItem(CART_KEY, JSON.stringify(cart));
-
-    window.dispatchEvent(
-      new Event('agrolink-cart-updated')
-    );
-  } catch (error) {
-    console.error('Unable to save AgroLink cart:', error);
-  }
-};
-
-const addProductToCart = (
-  product,
-  producerName,
-  requestedQuantity = 1
-) => {
-  const availableQuantity = Number(product.quantity || 0);
-  const quantityToAdd = Number(requestedQuantity || 1);
-
-  if (availableQuantity <= 0) {
+  if (stock <= 0) {
     return {
-      success: false,
-      message: 'This product is currently out of stock.',
+      label: 'Out of stock',
+      className: 'bg-red-50 text-red-700 border-red-200',
     };
   }
 
-  if (
-    !Number.isFinite(quantityToAdd) ||
-    quantityToAdd <= 0 ||
-    !Number.isInteger(quantityToAdd)
-  ) {
+  if (stock <= 10) {
     return {
-      success: false,
-      message: 'Please select a valid quantity.',
+      label: 'Low stock',
+      className: 'bg-amber-50 text-amber-700 border-amber-200',
     };
   }
-
-  const cart = getCart();
-
-  const existingIndex = cart.findIndex(
-    (item) => item.id === product.id
-  );
-
-  if (existingIndex !== -1) {
-    const existingItem = cart[existingIndex];
-
-    const newQuantity =
-      Number(existingItem.quantity || 0) + quantityToAdd;
-
-    if (newQuantity > availableQuantity) {
-      return {
-        success: false,
-        message: `Only ${formatNumber(
-          availableQuantity
-        )} ${product.unit || 'unit'} available.`,
-      };
-    }
-
-    cart[existingIndex] = {
-      ...existingItem,
-      producerId: product.producer_id,
-      cropName: product.crop_name,
-      quantity: newQuantity,
-      availableQuantity,
-      unit: product.unit,
-      pricePerUnit: Number(product.price_per_unit || 0),
-      location: product.location,
-      imagePath: product.image_path,
-      productType: product.product_type,
-      producerName,
-    };
-  } else {
-    if (quantityToAdd > availableQuantity) {
-      return {
-        success: false,
-        message: `Only ${formatNumber(
-          availableQuantity
-        )} ${product.unit || 'unit'} available.`,
-      };
-    }
-
-    cart.push({
-      id: product.id,
-      producerId: product.producer_id,
-      cropName: product.crop_name,
-      quantity: quantityToAdd,
-      availableQuantity,
-      unit: product.unit,
-      pricePerUnit: Number(product.price_per_unit || 0),
-      location: product.location,
-      imagePath: product.image_path,
-      productType: product.product_type,
-      producerName,
-    });
-  }
-
-  saveCart(cart);
 
   return {
-    success: true,
-    cart,
+    label: 'In stock',
+    className: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   };
 };
 
-// -----------------------------
-// Main component
-// -----------------------------
+const getProducerName = (producer) =>
+  producer?.business_name ||
+  producer?.farm_name ||
+  producer?.full_name ||
+  'AgroLink Producer';
 
-export default function PreHarvest() {
+const StarRating = ({
+  value = 0,
+  size = 'h-4 w-4',
+  showValue = false,
+}) => {
+  const rating = Number(value || 0);
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span
+        className="inline-flex items-center gap-0.5"
+        aria-label={`${rating.toFixed(1)} out of 5 stars`}
+      >
+        {[1, 2, 3, 4, 5].map((star) => (
+          <Star
+            key={star}
+            className={`${size} ${
+              star <= Math.round(rating)
+                ? 'fill-amber-400 text-amber-400'
+                : 'fill-slate-100 text-slate-300'
+            }`}
+          />
+        ))}
+      </span>
+
+      {showValue && (
+        <span className="text-xs font-bold text-slate-700">
+          {rating.toFixed(1)}
+        </span>
+      )}
+    </span>
+  );
+};
+
+const RatingSummary = ({ rating, count, label }) => (
+  <div className="flex min-w-0 items-center gap-2">
+    <StarRating value={rating} size="h-3.5 w-3.5" showValue />
+    <span className="truncate text-xs text-slate-500">
+      {count > 0
+        ? `${formatNumber(count)} ${label}`
+        : `No ${label} yet`}
+    </span>
+  </div>
+);
+
+const CompactRating = ({ rating, count, label }) => {
+  const hasRatings = Number(count || 0) > 0;
+
+  return (
+    <span
+      className="inline-flex min-w-0 items-center gap-1 text-[11px] leading-4"
+      title={
+        hasRatings
+          ? `${Number(rating || 0).toFixed(1)} out of 5 ${label} rating, ${formatNumber(count)} ${label}`
+          : `No ${label} yet`
+      }
+    >
+      <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />
+      <span className="font-bold text-slate-700">
+        {hasRatings ? Number(rating || 0).toFixed(1) : '—'}
+      </span>
+      <span className="truncate text-slate-500">
+        {label}
+        {hasRatings ? ` (${formatNumber(count)})` : ''}
+      </span>
+    </span>
+  );
+};
+
+const ProductCard = ({
+  product,
+  onOpen,
+  onAddToCart,
+  onQuickBuy,
+  onRequestBooking,
+}) => {
+  const images = getProductImages(product.image_path);
+  const imageUrl = getStorageImageUrl(images[0]);
+  const stockStatus = getStockStatus(product.quantity);
+  const producerName = getProducerName(product.producer);
+  const isOutOfStock = Number(product.quantity || 0) <= 0;
+  const productRating = product.productRating || {};
+  const sellerRating = product.sellerRating || {};
+  const isPreHarvest = product.product_type === 'pre_harvest';
+
+  return (
+    <article
+      onClick={() => onOpen(product)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpen(product);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`View ${product.crop_name} details`}
+      className="group flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-300 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+    >
+      <div className="relative h-36 overflow-hidden bg-slate-100 sm:h-44">
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={product.crop_name}
+            loading="lazy"
+            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-slate-400">
+            <ImageIcon className="h-9 w-9" />
+          </div>
+        )}
+
+        <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
+          <span className="rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-bold capitalize text-slate-700 shadow-sm">
+            {isPreHarvest ? 'Pre-harvest' : 'Post-harvest'}
+          </span>
+
+          {product.producer?.verification_status === 'approved' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white shadow-sm">
+              <CheckCircle2 className="h-3 w-3" />
+              Verified
+            </span>
+          )}
+        </div>
+
+        <span
+          className={`absolute bottom-2 right-2 rounded-full border px-2 py-1 text-[10px] font-bold ${stockStatus.className}`}
+        >
+          {stockStatus.label}
+        </span>
+      </div>
+
+      <div className="flex flex-1 flex-col p-3 sm:p-4">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-bold capitalize text-slate-900 sm:text-base">
+            {product.crop_name}
+          </h3>
+
+          <p className="mt-1 flex items-center gap-1 truncate text-xs text-slate-500">
+            <UserRound className="h-3.5 w-3.5 shrink-0" />
+            {producerName}
+          </p>
+
+          {product.location && (
+            <p className="mt-1 flex items-center gap-1 truncate text-xs text-slate-500">
+              <MapPin className="h-3.5 w-3.5 shrink-0" />
+              {product.location}
+            </p>
+          )}
+
+          <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-y border-slate-100 py-2">
+            <CompactRating
+              rating={productRating.avg}
+              count={productRating.count}
+              label="Product"
+            />
+            <span className="hidden h-3 w-px bg-slate-200 sm:block" />
+            <CompactRating
+              rating={sellerRating.avg}
+              count={sellerRating.count}
+              label="Seller"
+            />
+          </div>
+
+          {product.description && (
+            <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+              {product.description}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-auto space-y-3 pt-4">
+          <div className="flex items-end justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-base font-extrabold text-emerald-700 sm:text-lg">
+                {formatNaira(product.price_per_unit)}
+              </p>
+
+              <p className="text-[11px] text-slate-500">
+                per {product.unit || 'unit'}
+              </p>
+            </div>
+
+            <p className="shrink-0 text-right text-[11px] font-semibold text-slate-500">
+              {formatNumber(product.quantity)} {product.unit || 'units'}
+              <span className="block font-normal">available</span>
+            </p>
+          </div>
+
+          {isPreHarvest ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRequestBooking(product);
+              }}
+              className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700"
+            >
+              <Sprout className="h-4 w-4" />
+              Request Booking
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={isOutOfStock}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAddToCart(product);
+                }}
+                className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-emerald-200 px-2 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
+                Add to cart
+              </button>
+
+              <button
+                type="button"
+                disabled={isOutOfStock}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onQuickBuy(product);
+                }}
+                className="inline-flex min-h-10 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-2 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Buy now
+                <ArrowRight className="h-3.5 w-3.5 shrink-0" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+};
+
+const ProductModal = ({
+  product,
+  imageIndex,
+  quantity,
+  currentUser,
+  reviews,
+  eligibleOrders,
+  reviewStars,
+  reviewText,
+  submittingReview,
+  onReviewStarsChange,
+  onReviewTextChange,
+  onSubmitReview,
+  onClose,
+  onPreviousImage,
+  onNextImage,
+  onSelectImage,
+  onIncreaseQuantity,
+  onDecreaseQuantity,
+  onAddToCart,
+  onBuyNow,
+  onRequestBooking,
+}) => {
+  const images = getProductImages(product.image_path);
+  const imageUrl = getStorageImageUrl(images[imageIndex]);
+  const stock = Number(product.quantity || 0);
+  const stockStatus = getStockStatus(stock);
+  const producerName = getProducerName(product.producer);
+  const total = quantity * Number(product.price_per_unit || 0);
+  const productRating = product.productRating || {};
+  const sellerRating = product.sellerRating || {};
+  const isPreHarvest = product.product_type === 'pre_harvest';
+
+  const reviewableOrders = eligibleOrders.filter(
+    (order) =>
+      order.product_id === product.id &&
+      !reviews.some(
+        (review) =>
+          review.order_id === order.id &&
+          review.buyer_id === currentUser?.id
+      )
+  );
+
+  const latestReviews = [...reviews]
+    .filter((review) => review.product_id === product.id)
+    .sort(
+      (a, b) =>
+        new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="relative flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 sm:px-6">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+            <Package className="h-4 w-4 text-emerald-600" />
+            Product details
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            aria-label="Close product details"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="grid min-h-0 overflow-y-auto lg:grid-cols-2">
+          <div className="space-y-3 bg-slate-50 p-4 sm:p-6">
+            <div className="relative overflow-hidden rounded-2xl bg-white">
+              <div className="flex h-60 items-center justify-center sm:h-80">
+                {imageUrl ? (
+                  <img
+                    src={imageUrl}
+                    alt={product.crop_name}
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 text-slate-400">
+                    <ImageIcon className="h-12 w-12" />
+                    <span className="text-sm">No image available</span>
+                  </div>
+                )}
+              </div>
+
+              {images.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={onPreviousImage}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-2 text-slate-700 shadow-md hover:bg-white"
+                    aria-label="Previous image"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onNextImage}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-2 text-slate-700 shadow-md hover:bg-white"
+                    aria-label="Next image"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            {images.length > 1 && (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {images.map((image, index) => {
+                  const thumbnailUrl = getStorageImageUrl(image);
+
+                  return (
+                    <button
+                      type="button"
+                      key={`${image}-${index}`}
+                      onClick={() => onSelectImage(index)}
+                      aria-label={`View image ${index + 1}`}
+                      className={`h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 bg-white ${
+                        imageIndex === index
+                          ? 'border-emerald-500'
+                          : 'border-transparent'
+                      }`}
+                    >
+                      {thumbnailUrl ? (
+                        <img
+                          src={thumbnailUrl}
+                          alt={`${product.crop_name} ${index + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <ImageIcon className="mx-auto h-5 w-5 text-slate-400" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                  <UserRound className="h-5 w-5" />
+                </div>
+
+                <div className="min-w-0">
+                  <p className="text-xs text-slate-500">Farmer / seller</p>
+                  <p className="truncate text-sm font-bold text-slate-900">
+                    {producerName}
+                  </p>
+                </div>
+
+                {product.producer?.verification_status === 'approved' && (
+                  <CheckCircle2 className="ml-auto h-5 w-5 shrink-0 text-emerald-600" />
+                )}
+              </div>
+
+              {product.producer?.farm_name && (
+                <p className="mt-3 text-xs text-slate-500">
+                  Farm: {product.producer.farm_name}
+                </p>
+              )}
+
+              {product.producer?.lga_location && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {product.producer.lga_location}
+                </p>
+              )}
+
+              <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-slate-600">
+                    Seller reputation
+                  </p>
+                  <RatingSummary
+                    rating={sellerRating.avg}
+                    count={sellerRating.count}
+                    label="seller ratings"
+                  />
+                </div>
+
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-slate-600">
+                    This product
+                  </p>
+                  <RatingSummary
+                    rating={productRating.avg}
+                    count={productRating.count}
+                    label="product reviews"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-5 p-4 sm:p-6">
+            <div>
+              <div className="mb-3 flex flex-wrap gap-2">
+                <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold capitalize text-emerald-700">
+                  {isPreHarvest ? 'Pre-harvest' : 'Post-harvest'}
+                </span>
+
+                <span
+                  className={`rounded-full border px-3 py-1 text-xs font-bold ${stockStatus.className}`}
+                >
+                  {stockStatus.label}
+                </span>
+              </div>
+
+              <h2 className="text-2xl font-extrabold capitalize tracking-tight text-slate-900">
+                {product.crop_name}
+              </h2>
+
+              <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
+                {product.description?.trim() ||
+                  'No detailed product description has been added by the producer yet.'}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-slate-200 p-3">
+                <p className="text-xs text-slate-500">Price per unit</p>
+                <p className="mt-1 text-lg font-extrabold text-emerald-700">
+                  {formatNaira(product.price_per_unit)}
+                </p>
+                <p className="text-xs text-slate-500">
+                  per {product.unit || 'unit'}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-3">
+                <p className="text-xs text-slate-500">Available quantity</p>
+                <p className="mt-1 text-lg font-extrabold text-slate-900">
+                  {formatNumber(stock)}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {product.unit || 'units'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+              <h3 className="text-sm font-bold text-slate-900">
+                Product information
+              </h3>
+
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-slate-500">Location</span>
+                <span className="flex items-center gap-1 text-right font-semibold text-slate-800">
+                  <MapPin className="h-4 w-4 text-emerald-600" />
+                  {product.location || 'Not specified'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-slate-500">Unit</span>
+                <span className="font-semibold capitalize text-slate-800">
+                  {product.unit || 'Unit'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-slate-500">Listing type</span>
+                <span className="font-semibold text-slate-800">
+                  {isPreHarvest ? 'Pre-harvest' : 'Post-harvest'}
+                </span>
+              </div>
+            </div>
+
+            {isPreHarvest ? (
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <Sprout className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+                    <div>
+                      <h3 className="text-sm font-bold text-emerald-900">
+                        Reserve before harvest
+                      </h3>
+                      <p className="mt-1 text-xs leading-5 text-emerald-800">
+                        Submit your requested quantity and preferred collection
+                        date. The producer or authorized aggregator will respond
+                        to your request.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onRequestBooking(product)}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700"
+                >
+                  <Sprout className="h-4 w-4" />
+                  Request Advance Booking
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Quantity
+                    </h3>
+
+                    <span className="text-xs text-slate-500">
+                      Maximum: {formatNumber(stock)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-2">
+                    <button
+                      type="button"
+                      onClick={onDecreaseQuantity}
+                      disabled={quantity <= 1 || stock <= 0}
+                      className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+                      aria-label="Decrease quantity"
+                    >
+                      <Minus className="h-4 w-4" />
+                    </button>
+
+                    <span className="text-base font-extrabold text-slate-900">
+                      {quantity} {product.unit || 'unit'}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={onIncreaseQuantity}
+                      disabled={quantity >= stock || stock <= 0}
+                      className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+                      aria-label="Increase quantity"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-emerald-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-emerald-800">
+                      Estimated total
+                    </span>
+                    <span className="text-xl font-extrabold text-emerald-700">
+                      {formatNaira(total)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    disabled={stock <= 0}
+                    onClick={onAddToCart}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 px-4 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  >
+                    <ShoppingCart className="h-4 w-4" />
+                    Add to cart
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={stock <= 0}
+                    onClick={onBuyNow}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    Buy now
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </>
+            )}
+
+            <div className="flex items-start gap-2 text-xs leading-5 text-slate-500">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              {isPreHarvest
+                ? 'A booking request is not a confirmed order. Collection details and final terms must be confirmed before proceeding.'
+                : 'Availability and prices are based on the current farmer listing and may change before checkout.'}
+            </div>
+
+            <section className="border-t border-slate-200 pt-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="flex items-center gap-2 text-base font-extrabold text-slate-900">
+                    <MessageSquare className="h-5 w-5 text-emerald-600" />
+                    Product reviews
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Feedback from buyers about this specific product.
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-xl font-extrabold text-slate-900">
+                    {Number(productRating.avg || 0).toFixed(1)}
+                  </p>
+                  <StarRating
+                    value={productRating.avg}
+                    size="h-3.5 w-3.5"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {formatNumber(productRating.count || 0)} reviews
+                  </p>
+                </div>
+              </div>
+
+              {currentUser && reviewableOrders.length > 0 && (
+                <form
+                  onSubmit={onSubmitReview}
+                  className="mt-4 space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4"
+                >
+                  <div>
+                    <label className="text-sm font-bold text-slate-800">
+                      Rate this product
+                    </label>
+
+                    <div className="mt-2 flex items-center gap-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => onReviewStarsChange(star)}
+                          className="rounded-md p-1 transition hover:scale-110"
+                          aria-label={`Rate ${star} out of 5 stars`}
+                        >
+                          <Star
+                            className={`h-7 w-7 ${
+                              star <= reviewStars
+                                ? 'fill-amber-400 text-amber-400'
+                                : 'text-slate-300'
+                            }`}
+                          />
+                        </button>
+                      ))}
+
+                      <span className="ml-2 text-xs font-semibold text-slate-600">
+                        {reviewStars}/5
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="product-review-text"
+                      className="text-sm font-bold text-slate-800"
+                    >
+                      Your review (optional)
+                    </label>
+
+                    <textarea
+                      id="product-review-text"
+                      value={reviewText}
+                      onChange={(event) =>
+                        onReviewTextChange(event.target.value)
+                      }
+                      maxLength={2000}
+                      rows={3}
+                      placeholder="Share your experience with this product..."
+                      className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+                    />
+
+                    <p className="mt-1 text-right text-[11px] text-slate-500">
+                      {reviewText.length}/2000
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={submittingReview}
+                    className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {submittingReview
+                      ? 'Submitting review...'
+                      : 'Submit review'}
+                  </button>
+
+                  <p className="text-[11px] leading-5 text-slate-500">
+                    Available because you have a completed order for this
+                    product. One review is allowed per order.
+                  </p>
+                </form>
+              )}
+
+              {currentUser && reviewableOrders.length === 0 && (
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                  {latestReviews.some(
+                    (review) => review.buyer_id === currentUser.id
+                  )
+                    ? 'You have already reviewed this product for your eligible completed order.'
+                    : 'Complete an order for this product to become eligible to leave a review.'}
+                </div>
+              )}
+
+              {!currentUser && (
+                <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                  Sign in as a buyer and complete an order to leave a product
+                  review.
+                </p>
+              )}
+
+              <div className="mt-4 space-y-3">
+                {latestReviews.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center">
+                    <Star className="mx-auto h-7 w-7 text-slate-300" />
+                    <p className="mt-2 text-sm font-semibold text-slate-700">
+                      No reviews yet
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Be the first eligible buyer to review this product.
+                    </p>
+                  </div>
+                ) : (
+                  latestReviews.map((review) => (
+                    <article
+                      key={review.id}
+                      className="rounded-xl border border-slate-200 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                            <UserRound className="h-4 w-4" />
+                          </div>
+
+                          <div>
+                            <p className="text-xs font-bold text-slate-800">
+                              Verified buyer
+                            </p>
+                            <p className="text-[11px] text-slate-500">
+                              {formatDate(review.created_at)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <StarRating
+                          value={review.stars}
+                          size="h-3.5 w-3.5"
+                        />
+                      </div>
+
+                      {review.review_text?.trim() && (
+                        <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">
+                          {review.review_text}
+                        </p>
+                      )}
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const PreHarvest = () => {
   const navigate = useNavigate();
 
   const [products, setProducts] = useState([]);
-  const [producerProfiles, setProducerProfiles] = useState({});
-  const [searchTerm, setSearchTerm] = useState('');
+  const [productReviews, setProductReviews] = useState([]);
+  const [sellerRatings, setSellerRatings] = useState({});
+  const [currentUser, setCurrentUser] = useState(null);
+  const [eligibleOrders, setEligibleOrders] = useState([]);
 
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const [selectedQuantity, setSelectedQuantity] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeModalProduct, setActiveModalProduct] = useState(null);
+  const [bookingProduct, setBookingProduct] = useState(null);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [modalQuantity, setModalQuantity] = useState(1);
+
+  const [reviewStars, setReviewStars] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
+  const [error, setError] = useState('');
 
-  // -----------------------------
-  // Fetch pre-harvest products
-  // -----------------------------
+  const fetchProducts = useCallback(async (showRefresh = false) => {
+    if (showRefresh) setRefreshing(true);
+    else setLoading(true);
 
-  const fetchPreHarvestProducts = useCallback(
-    async (showLoader = true) => {
-      if (showLoader) {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
+    setError('');
 
-      setErrorMessage('');
+    try {
+      const { data: productRows, error: productsError } = await supabase
+        .from('products')
+        .select(
+          'id, producer_id, crop_name, description, quantity, unit, price_per_unit, location, image_path, product_type, created_at'
+        )
+        .eq('product_type', 'pre_harvest')
+        .order('created_at', { ascending: false });
 
-      try {
-        const {
-          data: productData,
-          error: productError,
-        } = await supabase
-          .from('products')
-          .select(`
-            id,
-            producer_id,
-            crop_name,
-            description,
-            quantity,
-            unit,
-            price_per_unit,
-            location,
-            image_path,
-            product_type,
-            created_at
-          `)
-          .eq('product_type', 'pre_harvest')
-          .order('created_at', { ascending: false });
+      if (productsError) throw productsError;
 
-        if (productError) {
-          throw productError;
-        }
+      const rows = (productRows || []).filter(
+        (product) => product.product_type === 'pre_harvest'
+      );
+      const productIds = rows.map((product) => product.id);
+      const producerIds = [
+        ...new Set(rows.map((product) => product.producer_id).filter(Boolean)),
+      ];
 
-        const fetchedProducts = productData || [];
+      let producerMap = {};
+      let sellerRatingMap = {};
+      let reviewRows = [];
+      let user = null;
+      let completedOrders = [];
 
-        setProducts(fetchedProducts);
-
-        const producerIds = [
-          ...new Set(
-            fetchedProducts
-              .map((product) => product.producer_id)
-              .filter(Boolean)
-          ),
-        ];
-
-        if (producerIds.length === 0) {
-          setProducerProfiles({});
-          return;
-        }
-
-        const {
-          data: profileData,
-          error: profileError,
-        } = await supabase
+      if (producerIds.length > 0) {
+        const { data: producers, error: producersError } = await supabase
           .from('profiles')
-          .select(`
-            id,
-            full_name,
-            business_name,
-            role,
-            verification_status,
-            farm_name,
-            farm_location
-          `)
+          .select(
+            'id, full_name, business_name, farm_name, farm_location, lga_location, role, verification_status'
+          )
           .in('id', producerIds);
 
-        if (profileError) {
+        if (producersError) throw producersError;
+
+        producerMap = (producers || []).reduce((map, producer) => {
+          map[producer.id] = producer;
+          return map;
+        }, {});
+
+        const { data: ratingRows, error: ratingError } = await supabase
+          .from('profile_ratings')
+          .select('profile_id, avg_stars, rating_count')
+          .in('profile_id', producerIds);
+
+        if (ratingError) {
           console.warn(
-            'Unable to load producer profiles:',
-            profileError.message
+            'Seller rating lookup unavailable:',
+            ratingError.message
           );
-
-          setProducerProfiles({});
         } else {
-          const profileMap = {};
-
-          (profileData || []).forEach((profile) => {
-            profileMap[profile.id] = profile;
-          });
-
-          setProducerProfiles(profileMap);
+          sellerRatingMap = (ratingRows || []).reduce((map, rating) => {
+            map[rating.profile_id] = {
+              avg: Number(rating.avg_stars || 0),
+              count: Number(rating.rating_count || 0),
+            };
+            return map;
+          }, {});
         }
-      } catch (error) {
-        console.error('Pre-harvest fetch error:', error);
-
-        setErrorMessage(
-          error?.message ||
-            'Unable to load pre-harvest products. Please try again.'
-        );
-
-        setProducts([]);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
       }
-    },
-    []
-  );
 
-  // -----------------------------
-  // Initial fetch and realtime
-  // -----------------------------
+      if (productIds.length > 0) {
+        const { data: reviews, error: reviewsError } = await supabase
+          .from('product_reviews')
+          .select(
+            'id, product_id, buyer_id, order_id, stars, review_text, created_at'
+          )
+          .in('product_id', productIds)
+          .order('created_at', { ascending: false });
+
+        if (reviewsError) {
+          console.warn('Product reviews unavailable:', reviewsError.message);
+        } else {
+          reviewRows = reviews || [];
+        }
+      }
+
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
+
+      if (!authError) {
+        user = authData?.user || null;
+      }
+
+      if (user && productIds.length > 0) {
+        const { data: orders, error: ordersError } = await supabase
+          .from('orders')
+          .select('id, product_id, status')
+          .eq('buyer_id', user.id)
+          .eq('status', 'completed')
+          .in('product_id', productIds);
+
+        if (ordersError) {
+          console.warn(
+            'Completed-order lookup unavailable:',
+            ordersError.message
+          );
+        } else {
+          completedOrders = orders || [];
+        }
+      }
+
+      const reviewSummaryMap = reviewRows.reduce((map, review) => {
+        const key = review.product_id;
+
+        if (!map[key]) map[key] = { total: 0, count: 0 };
+
+        map[key].total += Number(review.stars || 0);
+        map[key].count += 1;
+
+        return map;
+      }, {});
+
+      const preparedProducts = rows.map((product) => {
+        const summary = reviewSummaryMap[product.id] || {
+          total: 0,
+          count: 0,
+        };
+
+        return {
+          ...product,
+          producer: producerMap[product.producer_id] || null,
+          sellerRating: sellerRatingMap[product.producer_id] || {
+            avg: 0,
+            count: 0,
+          },
+          productRating: {
+            avg: summary.count
+              ? Math.round((summary.total / summary.count) * 10) / 10
+              : 0,
+            count: summary.count,
+          },
+        };
+      });
+
+      setProducts(preparedProducts);
+      setProductReviews(reviewRows);
+      setSellerRatings(sellerRatingMap);
+      setCurrentUser(user);
+      setEligibleOrders(completedOrders);
+
+      setActiveModalProduct((current) => {
+        if (!current) return null;
+        return preparedProducts.find((item) => item.id === current.id) || null;
+      });
+    } catch (fetchError) {
+      console.error('Pre-harvest fetch error:', fetchError);
+      setError(
+        fetchError.message ||
+          'Unable to load pre-harvest products. Please try again.'
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    fetchPreHarvestProducts(true);
+    fetchProducts();
 
-    const channel = supabase
-      .channel('pre-harvest-products-realtime')
+    const productsChannel = supabase
+      .channel('pre-harvest-page-products')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'products',
-          filter: 'product_type=eq.pre_harvest',
-        },
-        () => {
-          fetchPreHarvestProducts(false);
-        }
+        { event: '*', schema: 'public', table: 'products' },
+        () => fetchProducts(true)
+      )
+      .subscribe();
+
+    const reviewsChannel = supabase
+      .channel('pre-harvest-page-product-reviews')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'product_reviews' },
+        () => fetchProducts(true)
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(productsChannel);
+      supabase.removeChannel(reviewsChannel);
     };
-  }, [fetchPreHarvestProducts]);
-
-  // -----------------------------
-  // Reset modal state
-  // -----------------------------
+  }, [fetchProducts]);
 
   useEffect(() => {
-    if (!selectedProduct) {
-      setSelectedQuantity(1);
-      setSelectedImageIndex(0);
-      return;
-    }
+    if (!activeModalProduct && !bookingProduct) return undefined;
 
-    const available = Number(selectedProduct.quantity || 0);
-
-    setSelectedQuantity(available > 0 ? 1 : 0);
-    setSelectedImageIndex(0);
-  }, [selectedProduct]);
-
-  // -----------------------------
-  // Close modal with Escape
-  // -----------------------------
-
-  useEffect(() => {
     const handleEscape = (event) => {
       if (event.key === 'Escape') {
-        setSelectedProduct(null);
+        setActiveModalProduct(null);
+        setBookingProduct(null);
       }
     };
 
-    if (selectedProduct) {
-      document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
-    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleEscape);
 
     return () => {
-      document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = '';
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleEscape);
     };
-  }, [selectedProduct]);
-
-  // -----------------------------
-  // Derived products
-  // -----------------------------
-
-  const enrichedProducts = useMemo(() => {
-    return products.map((product) => ({
-      ...product,
-      producer: producerProfiles[product.producer_id] || null,
-    }));
-  }, [products, producerProfiles]);
+  }, [activeModalProduct, bookingProduct]);
 
   const filteredProducts = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+    const query = searchQuery.trim().toLowerCase();
 
-    if (!query) return enrichedProducts;
-
-    return enrichedProducts.filter((product) => {
-      const producer = product.producer;
+    return products.filter((product) => {
+      const producerName = getProducerName(product.producer).toLowerCase();
 
       return (
+        !query ||
         product.crop_name?.toLowerCase().includes(query) ||
         product.location?.toLowerCase().includes(query) ||
-        producer?.full_name?.toLowerCase().includes(query) ||
-        producer?.business_name?.toLowerCase().includes(query) ||
-        producer?.farm_name?.toLowerCase().includes(query)
+        producerName.includes(query) ||
+        product.description?.toLowerCase().includes(query)
       );
     });
-  }, [enrichedProducts, searchTerm]);
+  }, [products, searchQuery]);
 
-  const totalQuantity = useMemo(() => {
-    return products.reduce(
-      (total, product) =>
-        total + Number(product.quantity || 0),
-      0
+  const stats = useMemo(() => {
+    const availableProducts = products.filter(
+      (product) => Number(product.quantity || 0) > 0
     );
+
+    const uniqueProducers = new Set(
+      products.map((product) => product.producer_id).filter(Boolean)
+    );
+
+    return {
+      totalListings: products.length,
+      availableListings: availableProducts.length,
+      producers: uniqueProducers.size,
+    };
   }, [products]);
 
-  // -----------------------------
-  // Cart actions
-  // -----------------------------
+  const openProductModal = (product) => {
+    setActiveModalProduct(product);
+    setActiveImageIndex(0);
+    setModalQuantity(Number(product.quantity || 0) > 0 ? 1 : 0);
+    setReviewStars(5);
+    setReviewText('');
+  };
 
-  const handleAddToCart = (product) => {
-    const producer =
-      producerProfiles[product.producer_id] || null;
+  const closeProductModal = () => {
+    setActiveModalProduct(null);
+    setActiveImageIndex(0);
+    setModalQuantity(1);
+    setReviewStars(5);
+    setReviewText('');
+  };
 
-    const result = addProductToCart(
-      product,
-      getProducerName(producer),
-      1
-    );
-
-    if (!result.success) {
-      toast.error(result.message);
+  const handleRequestBooking = (product) => {
+    if (!currentUser?.id) {
+      toast.error('Please sign in as a buyer to request a booking.');
+      navigate('/login');
       return;
     }
 
-    toast.success(`${product.crop_name} added to your cart.`);
-  };
-
-  const handleQuickBuy = (product) => {
-    const producer =
-      producerProfiles[product.producer_id] || null;
-
-    const result = addProductToCart(
-      product,
-      getProducerName(producer),
-      1
-    );
-
-    if (!result.success) {
-      toast.error(result.message);
+    if (currentUser.user_metadata?.role &&
+        currentUser.user_metadata.role !== 'buyer') {
+      toast.error('Only buyer accounts can request pre-harvest bookings.');
       return;
     }
 
-    toast.success(
-      `${product.crop_name} added. Taking you to checkout...`
-    );
-
-    navigate('/checkout');
+    closeProductModal();
+    setBookingProduct(product);
   };
 
-  const handleModalAddToCart = () => {
-    if (!selectedProduct || selectedQuantity <= 0) return;
+  const closeBookingModal = () => {
+    setBookingProduct(null);
+  };
 
-    const producer =
-      producerProfiles[selectedProduct.producer_id] || null;
+  const readCart = () => {
+    try {
+      const savedCart = localStorage.getItem(CART_KEY);
+      const parsedCart = savedCart ? JSON.parse(savedCart) : [];
+      return Array.isArray(parsedCart) ? parsedCart : [];
+    } catch {
+      return [];
+    }
+  };
 
-    const result = addProductToCart(
-      selectedProduct,
-      getProducerName(producer),
-      selectedQuantity
+  const writeCart = (cart) => {
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    window.dispatchEvent(new Event('agrolink-cart-updated'));
+  };
+
+  const createCartItem = (product, quantity) => ({
+    id: product.id,
+    producerId: product.producer_id,
+    cropName: product.crop_name,
+    quantity,
+    availableQuantity: Number(product.quantity || 0),
+    unit: product.unit || 'unit',
+    pricePerUnit: Number(product.price_per_unit || 0),
+    location: product.location || '',
+    description: product.description || '',
+    productType: product.product_type || 'pre_harvest',
+    imagePath: getProductImages(product.image_path),
+    producerName: getProducerName(product.producer),
+  });
+
+  const addProductToCart = (product, requestedQuantity = 1) => {
+    const availableQuantity = Number(product.quantity || 0);
+
+    if (availableQuantity <= 0) {
+      toast.error('This product is currently out of stock.');
+      return false;
+    }
+
+    const safeQuantity = Math.max(
+      1,
+      Math.min(Number(requestedQuantity) || 1, availableQuantity)
     );
 
-    if (!result.success) {
-      toast.error(result.message);
+    const cart = readCart();
+    const existingIndex = cart.findIndex((item) => item.id === product.id);
+
+    if (existingIndex >= 0) {
+      const existingItem = cart[existingIndex];
+      const updatedQuantity = Math.min(
+        Number(existingItem.quantity || 0) + safeQuantity,
+        availableQuantity
+      );
+
+      cart[existingIndex] = {
+        ...existingItem,
+        ...createCartItem(product, updatedQuantity),
+      };
+
+      writeCart(cart);
+      toast.success(`${product.crop_name} quantity updated in your cart.`);
+      return true;
+    }
+
+    cart.push(createCartItem(product, safeQuantity));
+    writeCart(cart);
+    toast.success(`${product.crop_name} added to cart.`);
+    return true;
+  };
+
+  const handleAddToCart = (product, quantity = 1) => {
+    addProductToCart(product, quantity);
+  };
+
+  const handleQuickBuy = (product, quantity = 1) => {
+    const added = addProductToCart(product, quantity);
+
+    if (added) {
+      closeProductModal();
+      navigate('/checkout');
+    }
+  };
+
+  const moveImage = (direction) => {
+    if (!activeModalProduct) return;
+
+    const images = getProductImages(activeModalProduct.image_path);
+    if (images.length <= 1) return;
+
+    setActiveImageIndex((currentIndex) => {
+      if (direction === 'next') return (currentIndex + 1) % images.length;
+      return (currentIndex - 1 + images.length) % images.length;
+    });
+  };
+
+  const handleSubmitReview = async (event) => {
+    event.preventDefault();
+
+    if (!currentUser) {
+      toast.error('Please sign in before submitting a review.');
       return;
     }
 
-    toast.success(
-      `${formatNumber(selectedQuantity)} ${
-        selectedProduct.unit || 'unit'
-      } of ${selectedProduct.crop_name} added to your cart.`
-    );
-  };
+    if (!activeModalProduct) return;
 
-  const handleModalBuyNow = () => {
-    if (!selectedProduct || selectedQuantity <= 0) return;
-
-    const producer =
-      producerProfiles[selectedProduct.producer_id] || null;
-
-    const result = addProductToCart(
-      selectedProduct,
-      getProducerName(producer),
-      selectedQuantity
+    const reviewableOrder = eligibleOrders.find(
+      (order) =>
+        order.product_id === activeModalProduct.id &&
+        !productReviews.some(
+          (review) =>
+            review.order_id === order.id &&
+            review.buyer_id === currentUser.id
+        )
     );
 
-    if (!result.success) {
-      toast.error(result.message);
+    if (!reviewableOrder) {
+      toast.error('A completed order is required to review this product.');
       return;
     }
 
-    const cropName = selectedProduct.crop_name;
+    if (
+      !Number.isInteger(Number(reviewStars)) ||
+      reviewStars < 1 ||
+      reviewStars > 5
+    ) {
+      toast.error('Please select a star rating from 1 to 5.');
+      return;
+    }
 
-    setSelectedProduct(null);
+    setSubmittingReview(true);
 
-    toast.success(
-      `${cropName} added. Taking you to checkout...`
-    );
+    try {
+      const { error: insertError } = await supabase
+        .from('product_reviews')
+        .insert({
+          product_id: activeModalProduct.id,
+          buyer_id: currentUser.id,
+          order_id: reviewableOrder.id,
+          stars: Number(reviewStars),
+          review_text: reviewText.trim() || null,
+        });
 
-    navigate('/checkout');
+      if (insertError) throw insertError;
+
+      toast.success('Thank you! Your product review has been submitted.');
+      setReviewStars(5);
+      setReviewText('');
+
+      await fetchProducts(true);
+    } catch (submitError) {
+      console.error('Product review submission error:', submitError);
+
+      if (submitError.code === '23505') {
+        toast.error('You have already reviewed this product for that order.');
+      } else if (submitError.code === '42501') {
+        toast.error('You are not eligible to submit this review.');
+      } else {
+        toast.error(submitError.message || 'Unable to submit your review.');
+      }
+    } finally {
+      setSubmittingReview(false);
+    }
   };
-
-  // -----------------------------
-  // Quantity controls
-  // -----------------------------
-
-  const increaseQuantity = () => {
-    if (!selectedProduct) return;
-
-    const available = Number(selectedProduct.quantity || 0);
-
-    setSelectedQuantity((current) =>
-      Math.min(current + 1, available)
-    );
-  };
-
-  const decreaseQuantity = () => {
-    setSelectedQuantity((current) =>
-      Math.max(current - 1, 1)
-    );
-  };
-
-  // -----------------------------
-  // Selected product details
-  // -----------------------------
-
-  const selectedImages = selectedProduct
-    ? getProductImages(selectedProduct.image_path)
-    : [];
-
-  const selectedImageUrl = selectedImages.length
-    ? getStorageImageUrl(
-        selectedImages[
-          Math.min(
-            selectedImageIndex,
-            selectedImages.length - 1
-          )
-        ]
-      )
-    : null;
-
-  const selectedProducer = selectedProduct
-    ? producerProfiles[selectedProduct.producer_id] || null
-    : null;
-
-  const selectedAvailableQuantity = selectedProduct
-    ? Number(selectedProduct.quantity || 0)
-    : 0;
-
-  const selectedStockLabel =
-    selectedAvailableQuantity <= 0
-      ? 'Out of stock'
-      : selectedAvailableQuantity <= 10
-      ? 'Low stock'
-      : 'Available for booking';
-
-  // -----------------------------
-  // Render
-  // -----------------------------
 
   return (
-    <main className="min-h-screen bg-slate-50 px-3 py-6 sm:px-6 sm:py-8 lg:px-8">
-      <section className="mx-auto max-w-7xl">
-
-        {/* Hero */}
-        <div className="relative mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-800 via-emerald-700 to-green-500 p-5 text-white shadow-lg sm:mb-6 sm:p-7">
-          <div className="pointer-events-none absolute -right-16 -top-16 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
-          <div className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-lime-300/10 blur-3xl" />
-
-          <div className="relative">
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold backdrop-blur-sm">
-              <Sprout size={15} />
-              Advance Crop Listings
+    <div className="min-h-screen bg-slate-50">
+      <section className="border-b border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-lime-50">
+        <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8 lg:py-14">
+          <div className="max-w-3xl">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm">
+              <Sprout className="h-4 w-4" />
+              Advance crop listings from AgroLink producers
             </div>
 
-            <h1 className="max-w-3xl text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl">
+            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl lg:text-5xl">
               Pre-Harvest Crops
             </h1>
 
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-emerald-50">
-              Discover crops listed before harvest and plan your purchase
-              early by connecting with producers across Kano and nearby
-              farming communities.
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">
+              Discover crops before harvest, compare prices and producer
+              ratings, read buyer reviews, and reserve the quantity you need
+              in advance.
             </p>
-
-            <div className="mt-5 grid max-w-2xl grid-cols-2 gap-2.5 sm:grid-cols-3">
-              <div className="rounded-xl border border-white/10 bg-white/10 p-3 backdrop-blur-sm">
-                <p className="text-[11px] text-emerald-100">
-                  Listings
-                </p>
-
-                <p className="mt-1 text-lg font-black">
-                  {formatNumber(products.length)}
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/10 p-3 backdrop-blur-sm">
-                <p className="text-[11px] text-emerald-100">
-                  Quantity listed
-                </p>
-
-                <p className="mt-1 text-lg font-black">
-                  {formatNumber(totalQuantity)}
-                </p>
-              </div>
-
-              <div className="col-span-2 rounded-xl border border-white/10 bg-white/10 p-3 backdrop-blur-sm sm:col-span-1">
-                <p className="text-[11px] text-emerald-100">
-                  Booking type
-                </p>
-
-                <p className="mt-1 text-sm font-black">
-                  Advance booking
-                </p>
-              </div>
-            </div>
           </div>
-        </div>
 
-        {/* Toolbar */}
-        <div className="mb-5 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-base font-black text-slate-900 sm:text-lg">
-                Available pre-harvest products
-              </h2>
-
-              <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-                {filteredProducts.length}{' '}
-                {filteredProducts.length === 1
-                  ? 'listing'
-                  : 'listings'}{' '}
-                found
+          <div className="mt-8 grid grid-cols-3 gap-3 sm:max-w-xl sm:gap-5">
+            <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm sm:p-4">
+              <p className="text-xl font-extrabold text-emerald-700 sm:text-2xl">
+                {formatNumber(stats.totalListings)}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500 sm:text-xs">
+                Listings
               </p>
             </div>
 
-            <div className="flex w-full gap-2 lg:max-w-xl">
-              <div className="relative flex-1">
-                <Search
-                  size={17}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                />
+            <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm sm:p-4">
+              <p className="text-xl font-extrabold text-emerald-700 sm:text-2xl">
+                {formatNumber(stats.availableListings)}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500 sm:text-xs">
+                In stock
+              </p>
+            </div>
 
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(event) =>
-                    setSearchTerm(event.target.value)
-                  }
-                  placeholder="Search crop, location or producer..."
-                  className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => fetchPreHarvestProducts(false)}
-                disabled={refreshing}
-                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                title="Refresh listings"
-              >
-                {refreshing ? (
-                  <Loader2 size={17} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={17} />
-                )}
-              </button>
+            <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm sm:p-4">
+              <p className="text-xl font-extrabold text-emerald-700 sm:text-2xl">
+                {formatNumber(stats.producers)}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500 sm:text-xs">
+                Producers
+              </p>
             </div>
           </div>
         </div>
+      </section>
 
-        {/* Loading */}
-        {loading && (
-          <div className="rounded-xl border border-slate-200 bg-white p-10 text-center shadow-sm">
-            <Loader2
-              className="mx-auto animate-spin text-emerald-600"
-              size={34}
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative w-full lg:max-w-md">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search crop, description, location, or producer..."
+              className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
             />
-
-            <p className="mt-3 text-sm font-semibold text-slate-600">
-              Loading pre-harvest products...
-            </p>
           </div>
-        )}
 
-        {/* Error */}
-        {!loading && errorMessage && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center">
-            <p className="text-sm font-semibold text-red-700">
-              {errorMessage}
-            </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-sm font-bold text-emerald-700">
+              Advance booking
+            </span>
 
             <button
               type="button"
-              onClick={() => fetchPreHarvestProducts(true)}
-              className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700"
+              onClick={() => fetchProducts(true)}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`}
+              />
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {Array.from({ length: 10 }).map((_, index) => (
+              <div
+                key={index}
+                className="animate-pulse overflow-hidden rounded-2xl border border-slate-200 bg-white"
+              >
+                <div className="h-36 bg-slate-200 sm:h-44" />
+                <div className="space-y-3 p-3">
+                  <div className="h-4 rounded bg-slate-200" />
+                  <div className="h-3 rounded bg-slate-200" />
+                  <div className="h-3 w-2/3 rounded bg-slate-200" />
+                  <div className="h-8 rounded bg-slate-200" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+            <p className="text-sm font-semibold text-red-700">{error}</p>
+
+            <button
+              type="button"
+              onClick={() => fetchProducts()}
+              className="mt-4 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700"
             >
               Try again
             </button>
           </div>
-        )}
+        ) : filteredProducts.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-14 text-center">
+            <Package className="mx-auto h-10 w-10 text-slate-300" />
 
-        {/* Empty state */}
-        {!loading &&
-          !errorMessage &&
-          filteredProducts.length === 0 && (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center sm:p-12">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-50">
-                <Sprout size={30} className="text-emerald-500" />
-              </div>
+            <h2 className="mt-4 text-lg font-bold text-slate-900">
+              No pre-harvest crops found
+            </h2>
 
-              <h3 className="mt-4 text-base font-black text-slate-800 sm:text-lg">
-                {searchTerm
-                  ? 'No matching crops found'
-                  : 'No pre-harvest listings yet'}
-              </h3>
-
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-                {searchTerm
-                  ? 'Try another crop name, location or producer.'
-                  : 'Producers have not added any pre-harvest products yet.'}
-              </p>
-
-              {searchTerm && (
-                <button
-                  type="button"
-                  onClick={() => setSearchTerm('')}
-                  className="mt-4 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
-                >
-                  Clear search
-                </button>
-              )}
-            </div>
-          )}
-
-        {/* Product grid */}
-        {!loading &&
-          !errorMessage &&
-          filteredProducts.length > 0 && (
-            <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredProducts.map((product) => {
-                const imageUrl = getStorageImageUrl(
-                  getProductImages(product.image_path)[0]
-                );
-
-                const producer = product.producer;
-                const producerName = getProducerName(producer);
-                const availableQuantity = Number(product.quantity || 0);
-                const isAvailable = availableQuantity > 0;
-
-                return (
-                  <article
-                    key={product.id}
-                    className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-lg"
-                  >
-                    {/* Product image */}
-                    <div className="relative h-32 overflow-hidden bg-emerald-50 sm:h-36">
-                      {imageUrl ? (
-                        <img
-                          src={imageUrl}
-                          alt={product.crop_name}
-                          loading="lazy"
-                          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center bg-gradient-to-br from-emerald-100 to-lime-50">
-                          <Sprout size={42} className="text-emerald-600" />
-                        </div>
-                      )}
-
-                      <span className="absolute left-2.5 top-2.5 rounded-full bg-emerald-700 px-2.5 py-1 text-[10px] font-black text-white shadow">
-                        Pre-Harvest
-                      </span>
-
-                      {producer?.verification_status === 'approved' && (
-                        <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-white/95 px-2 py-1 text-[10px] font-bold text-emerald-700 shadow">
-                          <ShieldCheck size={12} />
-                          Verified
-                        </span>
-                      )}
-
-                      {!isAvailable && (
-                        <span className="absolute bottom-2.5 left-2.5 rounded-full bg-red-600 px-2.5 py-1 text-[10px] font-black text-white shadow">
-                          Unavailable
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Product content */}
-                    <div className="p-3.5">
-                      <h3 className="truncate text-base font-black capitalize text-slate-900">
-                        {product.crop_name}
-                      </h3>
-
-                      <div className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
-                        <MapPin
-                          size={13}
-                          className="shrink-0 text-emerald-600"
-                        />
-
-                        <span className="truncate">
-                          {product.location || 'Location not specified'}
-                        </span>
-                      </div>
-
-                      <div className="mt-3 flex items-center gap-2">
-                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                          <UserRound size={14} />
-                        </div>
-
-                        <p className="truncate text-xs font-bold text-slate-700">
-                          {producerName}
-                        </p>
-                      </div>
-
-                      <div className="mt-3 flex items-end justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-[10px] text-slate-500">
-                            Price / {product.unit || 'unit'}
-                          </p>
-
-                          <p className="mt-0.5 truncate text-base font-black text-emerald-700">
-                            {formatCurrency(product.price_per_unit)}
-                          </p>
-                        </div>
-
-                        <div className="text-right">
-                          <p className="text-[10px] text-slate-500">
-                            Available
-                          </p>
-
-                          <p className="mt-0.5 text-xs font-black text-slate-800">
-                            {formatNumber(product.quantity)}{' '}
-                            {product.unit || 'unit'}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleAddToCart(product)}
-                          disabled={!isAvailable}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-black text-emerald-700 transition hover:bg-emerald-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <ShoppingCart size={14} />
-                          Cart
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleQuickBuy(product)}
-                          disabled={!isAvailable}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-2 py-2.5 text-xs font-black text-white transition hover:bg-emerald-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <Zap size={14} />
-                          Buy
-                        </button>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => setSelectedProduct(product)}
-                        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-[0.98]"
-                      >
-                        View booking details
-                        <CalendarDays size={14} />
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-      </section>
-
-      {/* Product details modal */}
-      {selectedProduct && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-3 py-4 backdrop-blur-sm sm:px-5"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setSelectedProduct(null);
-            }
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="pre-harvest-product-title"
-            className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:rounded-3xl lg:flex-row"
-          >
-            {/* Gallery */}
-            <div className="relative bg-slate-100 lg:w-[46%]">
-              <div className="relative h-56 overflow-hidden sm:h-64 lg:h-full lg:min-h-[520px]">
-                {selectedImageUrl ? (
-                  <img
-                    src={selectedImageUrl}
-                    alt={selectedProduct.crop_name}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center bg-gradient-to-br from-emerald-100 to-lime-50">
-                    <Sprout size={72} className="text-emerald-600" />
-                  </div>
-                )}
-
-                <span className="absolute left-4 top-4 rounded-full bg-emerald-700 px-3 py-1.5 text-[11px] font-black text-white shadow">
-                  Pre-Harvest
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedProduct(null)}
-                  aria-label="Close product details"
-                  className="absolute right-4 top-4 rounded-full bg-white/95 p-2 text-slate-700 shadow-lg transition hover:bg-white"
-                >
-                  <X size={18} />
-                </button>
-
-                {selectedImages.length > 1 && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedImageIndex((current) =>
-                          current === 0
-                            ? selectedImages.length - 1
-                            : current - 1
-                        )
-                      }
-                      aria-label="Previous product image"
-                      className="absolute left-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-lg transition hover:bg-white"
-                    >
-                      <ChevronLeft size={18} />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedImageIndex((current) =>
-                          current === selectedImages.length - 1
-                            ? 0
-                            : current + 1
-                        )
-                      }
-                      aria-label="Next product image"
-                      className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-lg transition hover:bg-white"
-                    >
-                      <ChevronRight size={18} />
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {selectedImages.length > 1 && (
-                <div className="flex gap-2 overflow-x-auto border-t border-slate-200 bg-white p-3">
-                  {selectedImages.map((image, index) => {
-                    const thumbnailUrl = getStorageImageUrl(image);
-
-                    return (
-                      <button
-                        key={`${image}-${index}`}
-                        type="button"
-                        onClick={() => setSelectedImageIndex(index)}
-                        className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 ${
-                          selectedImageIndex === index
-                            ? 'border-emerald-600'
-                            : 'border-transparent'
-                        }`}
-                        aria-label={`View product image ${index + 1}`}
-                      >
-                        {thumbnailUrl ? (
-                          <img
-                            src={thumbnailUrl}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full items-center justify-center bg-emerald-50">
-                            <Sprout size={20} className="text-emerald-600" />
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Details */}
-            <div className="min-w-0 flex-1 overflow-y-auto p-5 sm:p-6 lg:p-7">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-wider text-emerald-600">
-                    Advance booking listing
-                  </p>
-
-                  <h2
-                    id="pre-harvest-product-title"
-                    className="mt-1 text-2xl font-black capitalize text-slate-900 sm:text-3xl"
-                  >
-                    {selectedProduct.crop_name}
-                  </h2>
-
-                  <p className="mt-1 text-sm text-slate-500">
-                    {getProducerName(selectedProducer)}
-                  </p>
-                </div>
-
-                <span
-                  className={`rounded-full px-3 py-1.5 text-xs font-black ${
-                    selectedAvailableQuantity <= 0
-                      ? 'bg-red-50 text-red-700'
-                      : selectedAvailableQuantity <= 10
-                      ? 'bg-amber-50 text-amber-700'
-                      : 'bg-emerald-50 text-emerald-700'
-                  }`}
-                >
-                  {selectedStockLabel}
-                </span>
-              </div>
-
-              {/* Price and quantity */}
-              <div className="mt-5 grid grid-cols-2 gap-2.5">
-                <div className="rounded-xl bg-emerald-50 p-3">
-                  <p className="text-[11px] text-emerald-700">
-                    Price per {selectedProduct.unit || 'unit'}
-                  </p>
-
-                  <p className="mt-1 text-lg font-black text-emerald-700">
-                    {formatCurrency(selectedProduct.price_per_unit)}
-                  </p>
-                </div>
-
-                <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-[11px] text-slate-500">
-                    Available quantity
-                  </p>
-
-                  <p className="mt-1 text-lg font-black text-slate-900">
-                    {formatNumber(selectedProduct.quantity)}{' '}
-                    {selectedProduct.unit || 'unit'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Product information */}
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                  <span className="text-xs text-slate-500">
-                    Location
-                  </span>
-
-                  <span className="text-right text-xs font-bold text-slate-900">
-                    {selectedProduct.location || 'Not specified'}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                  <span className="text-xs text-slate-500">
-                    Listed
-                  </span>
-
-                  <span className="text-right text-xs font-bold text-slate-900">
-                    {formatDate(selectedProduct.created_at)}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                  <span className="text-xs text-slate-500">
-                    Listing type
-                  </span>
-
-                  <span className="text-right text-xs font-bold text-slate-900">
-                    Pre-harvest
-                  </span>
-                </div>
-              </div>
-
-              {/* Producer information */}
-              <div className="mt-5 rounded-xl border border-slate-200 p-3.5">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-                    <UserRound size={18} />
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-medium text-slate-400">
-                      Listed by
-                    </p>
-
-                    <p className="truncate text-sm font-black text-slate-900">
-                      {getProducerName(selectedProducer)}
-                    </p>
-
-                    {selectedProducer?.farm_name && (
-                      <p className="mt-1 text-xs text-slate-500">
-                        Farm: {selectedProducer.farm_name}
-                      </p>
-                    )}
-
-                    {selectedProducer?.verification_status === 'approved' && (
-                      <p className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-emerald-700">
-                        <ShieldCheck size={14} />
-                        Verified producer
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Description */}
-              <div className="mt-5">
-                <h3 className="text-sm font-black text-slate-900">
-                  Product description
-                </h3>
-
-                <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-500">
-                  {selectedProduct.description ||
-                    'No detailed description has been added by the producer yet. Please review the available quantity, location, price, and booking information before continuing.'}
-                </p>
-              </div>
-
-              {/* Booking note */}
-              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                <div className="flex items-start gap-2.5">
-                  <CalendarDays
-                    size={19}
-                    className="mt-0.5 shrink-0 text-amber-700"
-                  />
-
-                  <div>
-                    <p className="text-sm font-black text-amber-900">
-                      Advance booking
-                    </p>
-
-                    <p className="mt-1 text-xs leading-5 text-amber-800">
-                      This crop is listed before harvest. Select the amount
-                      you want to reserve and continue to checkout.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Quantity */}
-              {selectedAvailableQuantity > 0 && (
-                <div className="mt-5 rounded-xl border border-slate-200 p-3.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-black text-slate-900">
-                        Booking quantity
-                      </p>
-
-                      <p className="mt-1 text-xs text-slate-500">
-                        Choose the amount you need.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50">
-                      <button
-                        type="button"
-                        onClick={decreaseQuantity}
-                        disabled={selectedQuantity <= 1}
-                        className="flex h-9 w-9 items-center justify-center text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <Minus size={15} />
-                      </button>
-
-                      <div className="flex h-9 min-w-10 items-center justify-center border-x border-slate-200 px-2 text-sm font-black text-slate-900">
-                        {formatNumber(selectedQuantity)}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={increaseQuantity}
-                        disabled={
-                          selectedQuantity >= selectedAvailableQuantity
-                        }
-                        className="flex h-9 w-9 items-center justify-center text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <Plus size={15} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-                    <span className="text-xs text-slate-500">
-                      Estimated total
-                    </span>
-
-                    <span className="text-lg font-black text-emerald-700">
-                      {formatCurrency(
-                        selectedQuantity *
-                          Number(selectedProduct.price_per_unit || 0)
-                      )}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Actions */}
-              {selectedAvailableQuantity > 0 ? (
-                <div className="mt-5 grid grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={handleModalAddToCart}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm font-black text-emerald-700 transition hover:bg-emerald-100 active:scale-[0.98]"
-                  >
-                    <ShoppingCart size={16} />
-                    Add to Cart
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleModalBuyNow}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-3 text-sm font-black text-white transition hover:bg-emerald-700 active:scale-[0.98]"
-                  >
-                    <Zap size={16} />
-                    Buy Now
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-5 rounded-xl bg-red-50 p-4 text-center">
-                  <p className="text-sm font-black text-red-700">
-                    This product is currently unavailable.
-                  </p>
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setSelectedProduct(null)}
-                className="mt-2.5 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 active:scale-[0.98]"
-              >
-                Close details
-              </button>
-            </div>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
+              Try another crop name, description, location, or producer.
+            </p>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
+            {filteredProducts.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                onOpen={openProductModal}
+                onAddToCart={handleAddToCart}
+                onQuickBuy={handleQuickBuy}
+                onRequestBooking={handleRequestBooking}
+              />
+            ))}
+          </div>
+        )}
+      </main>
+
+      {activeModalProduct && (
+        <ProductModal
+          product={activeModalProduct}
+          imageIndex={activeImageIndex}
+          quantity={modalQuantity}
+          currentUser={currentUser}
+          reviews={productReviews}
+          eligibleOrders={eligibleOrders}
+          reviewStars={reviewStars}
+          reviewText={reviewText}
+          submittingReview={submittingReview}
+          onReviewStarsChange={setReviewStars}
+          onReviewTextChange={setReviewText}
+          onSubmitReview={handleSubmitReview}
+          onClose={closeProductModal}
+          onPreviousImage={() => moveImage('previous')}
+          onNextImage={() => moveImage('next')}
+          onSelectImage={setActiveImageIndex}
+          onIncreaseQuantity={() => {
+            setModalQuantity((current) =>
+              Math.min(current + 1, Number(activeModalProduct.quantity || 0))
+            );
+          }}
+          onDecreaseQuantity={() => {
+            setModalQuantity((current) => Math.max(current - 1, 1));
+          }}
+          onAddToCart={() => {
+            handleAddToCart(activeModalProduct, modalQuantity);
+          }}
+          onBuyNow={() => {
+            handleQuickBuy(activeModalProduct, modalQuantity);
+          }}
+          onRequestBooking={handleRequestBooking}
+        />
       )}
-    </main>
+
+      {bookingProduct && (
+        <PreHarvestBookingModal
+          product={bookingProduct}
+          currentUser={currentUser}
+          onClose={closeBookingModal}
+          onSuccess={() => fetchProducts(true)}
+        />
+      )}
+    </div>
   );
-}
+};
+
+export default PreHarvest;

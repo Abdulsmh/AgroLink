@@ -15,7 +15,7 @@ import ScrollToTop from './components/ScrollToTop';
 import { Home } from './pages/Home';
 import { Login } from './components/Login';
 import { Register } from './components/Register';
-import  Catalog  from './pages/Catalog';
+import Catalog from './pages/Catalog';
 import { About } from './pages/About';
 import { Contact } from './pages/Contact';
 import PreHarvest from './pages/PreHarvest';
@@ -24,18 +24,20 @@ import ProductDetails from './pages/ProductDetails';
 import { Cart } from './pages/Cart';
 import Checkout from './pages/Checkout';
 
-// Buyer pages
+// Buyer layout and pages
+import BuyerLayout from './components/layouts/BuyerLayout';
 import BuyerDashboard from './pages/buyer/BuyerDashboard';
 import BuyerOrders from './pages/BuyerOrders';
+import BuyerBulkRequest from './pages/buyer/BuyerBulkRequest';
+import BuyerBulkRequests from './pages/buyer/BuyerBulkRequests';
+import BuyerBookings from './pages/buyer/BuyerBookings';
 
 // Public components
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 
-// Producer layout
+// Producer layout and pages
 import { ProducerLayout } from './components/layouts/ProducerLayout';
-
-// Producer pages
 import { ProducerDashboard } from './pages/producer/ProducerDashboard';
 import { ProducerListings } from './pages/producer/ProducerListings';
 import { ProducerOrders } from './pages/producer/ProducerOrders';
@@ -46,33 +48,39 @@ import { ProducerMessages } from './pages/producer/ProducerMessages';
 import { ProducerCertificates } from './pages/producer/ProducerCertificates';
 import { ProducerVerification } from './pages/producer/ProducerVerification';
 import { ProducerProfile } from './pages/producer/ProducerProfile';
+import ProducerAggregatorRequests from './pages/producer/ProducerAggregatorRequests';
+import ProducerBookings from './pages/producer/ProducerBookings';
 
-// Admin layout
+// Aggregator layout and pages
+import { AggregatorLayout } from './components/layouts/AggregatorLayout';
+import AggregatorDashboard from './pages/aggregator/AggregatorDashboard';
+import AggregatorFarmers from './pages/aggregator/AggregatorFarmers';
+import AggregatorListings from './pages/aggregator/AggregatorListings';
+import AggregatorOrders from './pages/aggregator/AggregatorOrders';
+import AggregatorProfile from './pages/aggregator/AggregatorProfile';
+import AggregatorBulkRequests from './pages/aggregator/AggregatorBulkRequests';
+import AggregatorBookings from './pages/aggregator/AggregatorBookings';
+
+// Admin layout and pages
 import { AdminLayout } from './components/layouts/AdminLayout';
-
-// Admin pages
 import { AdminDashboard } from './pages/admin/AdminDashboard';
 import { AdminProducerApprovals } from './pages/admin/AdminProducerApprovals';
-import { AdminUserManagement } from './pages/admin/AdminUserManagement';
+import AdminRoleRequests from './pages/admin/AdminRoleRequests';
+import AdminUserManagement from './pages/admin/AdminUserManagement';
 import { AdminAudits } from './pages/admin/AdminAudits';
 import { AdminLogisticsHub } from './pages/admin/AdminLogisticsHub';
 import { AdminMarketPricing } from './pages/admin/AdminMarketPricing';
 import { AdminDisputes } from './pages/admin/AdminDisputes';
 import { AdminSettings } from './pages/admin/AdminSettings';
 
-const PublicLayout = ({ children }) => {
-  return (
-    <div className="flex min-h-screen flex-col justify-between bg-slate-50 font-sans">
-      <Navbar />
-
-      <main className="flex-1">{children}</main>
-
-      <Footer />
-    </div>
-  );
-};
-
-const PRODUCER_ROLES = ['producer', 'aggregator', 'agent'];
+// Public layout
+const PublicLayout = ({ children }) => (
+  <div className="flex min-h-screen flex-col justify-between bg-slate-50 font-sans">
+    <Navbar />
+    <main className="flex-1">{children}</main>
+    <Footer />
+  </div>
+);
 
 export default function App() {
   return (
@@ -91,13 +99,10 @@ export default function App() {
           }}
         />
 
-        {/* Automatically return every new page to the top */}
         <ScrollToTop />
 
         <Routes>
-          {/* =========================
-              PUBLIC ROUTES
-          ========================== */}
+          {/* ==================== PUBLIC ROUTES ==================== */}
 
           <Route
             path="/"
@@ -153,9 +158,7 @@ export default function App() {
             }
           />
 
-          {/* =========================
-              PRODUCT / SHOPPING ROUTES
-          ========================== */}
+          {/* ==================== PRODUCT & SHOPPING ==================== */}
 
           <Route
             path="/product/:productId"
@@ -175,7 +178,6 @@ export default function App() {
             }
           />
 
-          {/* Checkout is restricted to authenticated buyers */}
           <Route
             path="/checkout"
             element={
@@ -187,53 +189,86 @@ export default function App() {
             }
           />
 
-          {/* =========================
-              AUTH ROUTES
-          ========================== */}
+          {/* ==================== AUTHENTICATION ==================== */}
 
           <Route path="/login" element={<Login />} />
-
           <Route path="/register" element={<Register />} />
 
-          {/* =========================
-              BUYER ROUTES
-          ========================== */}
-
-          <Route
-            path="/buyer/dashboard"
-            element={
-              <ProtectedRoute allowedRoles={['buyer']}>
-                <PublicLayout>
-                  <BuyerDashboard />
-                </PublicLayout>
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
-            path="/buyer/orders"
-            element={
-              <ProtectedRoute allowedRoles={['buyer']}>
-                <PublicLayout>
-                  <BuyerOrders />
-                </PublicLayout>
-              </ProtectedRoute>
-            }
-          />
+          {/* ==================== BUYER PORTAL ==================== */}
 
           <Route
             path="/buyer"
-            element={<Navigate to="/buyer/dashboard" replace />}
-          />
+            element={
+              <ProtectedRoute allowedRoles={['buyer']}>
+                <BuyerLayout />
+              </ProtectedRoute>
+            }
+          >
+            {/* /buyer redirects to the buyer dashboard */}
+            <Route
+              index
+              element={<Navigate to="/buyer/dashboard" replace />}
+            />
 
-          {/* =========================
-              PRODUCER ROUTES
-          ========================== */}
+            <Route
+              path="dashboard"
+              element={<BuyerDashboard />}
+            />
+
+            {/* Buyer marketplace */}
+            <Route
+              path="catalog"
+              element={<Catalog />}
+            />
+
+            {/* Pre-harvest product browsing */}
+            <Route
+              path="pre-harvest"
+              element={<PreHarvest />}
+            />
+
+            {/* Buyer booking history and cancellation */}
+            <Route
+              path="bookings"
+              element={<BuyerBookings />}
+            />
+
+            {/* Post-harvest product browsing */}
+            <Route
+              path="post-harvest"
+              element={<PostHarvest />}
+            />
+
+            {/* Shopping cart */}
+            <Route
+              path="cart"
+              element={<Cart />}
+            />
+
+            {/* Buyer orders */}
+            <Route
+              path="orders"
+              element={<BuyerOrders />}
+            />
+
+            {/* Bulk requests */}
+            <Route
+              path="bulk-request"
+              element={<BuyerBulkRequest />}
+            />
+
+            <Route
+              path="bulk-requests"
+              element={<BuyerBulkRequests />}
+            />
+          </Route>
+
+          {/* ==================== PRODUCER PORTAL ==================== */}
 
           <Route
             path="/producer"
             element={
-              <ProtectedRoute allowedRoles={PRODUCER_ROLES}>
+              <ProtectedRoute allowedRoles={['producer']}>
                 <ProducerLayout />
               </ProtectedRoute>
             }
@@ -256,6 +291,30 @@ export default function App() {
             <Route
               path="orders"
               element={<ProducerOrders />}
+            />
+
+            <Route
+              path="bookings"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['producer']}
+                  requireApproved
+                >
+                  <ProducerBookings />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="aggregator-requests"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['producer']}
+                  requireApproved
+                >
+                  <ProducerAggregatorRequests />
+                </ProtectedRoute>
+              }
             />
 
             <Route
@@ -294,9 +353,108 @@ export default function App() {
             />
           </Route>
 
-          {/* =========================
-              ADMIN ROUTES
-          ========================== */}
+          {/* ==================== AGGREGATOR PORTAL ==================== */}
+
+          <Route
+            path="/aggregator"
+            element={
+              <ProtectedRoute allowedRoles={['aggregator']}>
+                <AggregatorLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route
+              index
+              element={<Navigate to="/aggregator/dashboard" replace />}
+            />
+
+            {/* Available while verification is pending */}
+            <Route
+              path="dashboard"
+              element={<AggregatorDashboard />}
+            />
+
+            <Route
+              path="profile"
+              element={<AggregatorProfile />}
+            />
+
+            {/* Approved aggregators only */}
+            <Route
+              path="farmers"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['aggregator']}
+                  requireApproved
+                >
+                  <AggregatorFarmers />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Retained for compatibility with the existing route */}
+            <Route
+              path="farmer-records"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['aggregator']}
+                  requireApproved
+                >
+                  <AggregatorFarmers />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="listings"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['aggregator']}
+                  requireApproved
+                >
+                  <AggregatorListings />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="orders"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['aggregator']}
+                  requireApproved
+                >
+                  <AggregatorOrders />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="bulk-requests"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['aggregator']}
+                  requireApproved
+                >
+                  <AggregatorBulkRequests />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="bookings"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['aggregator']}
+                  requireApproved
+                >
+                  <AggregatorBookings />
+                </ProtectedRoute>
+              }
+            />
+          </Route>
+
+          {/* ==================== ADMIN PORTAL ==================== */}
 
           <Route
             path="/admin"
@@ -314,6 +472,11 @@ export default function App() {
             <Route
               path="dashboard"
               element={<AdminDashboard />}
+            />
+
+            <Route
+              path="role-requests"
+              element={<AdminRoleRequests />}
             />
 
             <Route
@@ -352,9 +515,7 @@ export default function App() {
             />
           </Route>
 
-          {/* =========================
-              FALLBACK ROUTE
-          ========================== */}
+          {/* ==================== FALLBACK ==================== */}
 
           <Route
             path="*"

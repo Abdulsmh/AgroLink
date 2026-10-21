@@ -1,37 +1,34 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Search,
-  Loader2,
-  RefreshCw,
   Users,
+  UserCheck,
+  UserCog,
   ShieldCheck,
-  Sprout,
-  ShoppingCart,
-  Building2,
   MapPin,
-  CalendarDays,
-  ChevronRight,
+  Phone,
+  Building2,
+  Sprout,
   X,
   CheckCircle,
   AlertTriangle,
-  Eye,
-  UserCog,
+  ChevronDown,
 } from 'lucide-react';
 import { supabase } from '../../config/supabaseClient';
-import toast from 'react-hot-toast';
 
-export function AdminUserManagement() {
+const AdminUserManagement = () => {
   const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
-  const [verificationFilter, setVerificationFilter] =
-    useState('all');
+  const [verificationFilter, setVerificationFilter] = useState('all');
 
   const [selectedUser, setSelectedUser] = useState(null);
-  const [roleChange, setRoleChange] = useState(null);
-  const [updatingId, setUpdatingId] = useState(null);
+  const [showDetails, setShowDetails] = useState(false);
+
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   useEffect(() => {
     fetchUsers();
@@ -39,12 +36,12 @@ export function AdminUserManagement() {
 
   const fetchUsers = async () => {
     try {
-      setLoading(true);
+      setIsLoading(true);
+      setError('');
 
-      const { data, error } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('profiles')
-        .select(
-          `
+        .select(`
           id,
           full_name,
           phone_number,
@@ -59,96 +56,19 @@ export function AdminUserManagement() {
           business_address,
           created_at,
           updated_at
-        `
-        )
+        `)
         .order('created_at', { ascending: false });
 
-      if (error) {
-        throw error;
+      if (fetchError) {
+        throw fetchError;
       }
 
       setUsers(data || []);
-    } catch (error) {
-      console.error('Error loading users:', error);
-      toast.error('Failed to load user directory.');
+    } catch (err) {
+      console.error('Error fetching users:', err);
+      setError(err.message || 'Failed to load users.');
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const requestRoleChange = (user, newRole) => {
-    if (!user || user.role === newRole) {
-      return;
-    }
-
-    // Protect existing admin accounts.
-    if (user.role === 'admin') {
-      toast.error(
-        'Admin role cannot be changed from this interface.'
-      );
-      return;
-    }
-
-    setRoleChange({
-      user,
-      newRole,
-    });
-  };
-
-  const handleRoleChange = async () => {
-    if (!roleChange) {
-      return;
-    }
-
-    const { user, newRole } = roleChange;
-
-    try {
-      setUpdatingId(user.id);
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          role: newRole,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id);
-
-      if (error) {
-        throw error;
-      }
-
-      setUsers((currentUsers) =>
-        currentUsers.map((currentUser) =>
-          currentUser.id === user.id
-            ? {
-                ...currentUser,
-                role: newRole,
-              }
-            : currentUser
-        )
-      );
-
-      toast.success(
-        `${user.full_name || 'User'} is now a ${formatRole(
-          newRole
-        )}.`
-      );
-
-      setRoleChange(null);
-
-      if (selectedUser?.id === user.id) {
-        setSelectedUser((currentUser) => ({
-          ...currentUser,
-          role: newRole,
-        }));
-      }
-    } catch (error) {
-      console.error('Error updating role:', error);
-      toast.error(
-        error?.message || 'Failed to update user role.'
-      );
-    } finally {
-      setUpdatingId(null);
+      setIsLoading(false);
     }
   };
 
@@ -156,82 +76,109 @@ export function AdminUserManagement() {
     const search = searchTerm.trim().toLowerCase();
 
     return users.filter((user) => {
-      const role = user.role || '';
-      const verification =
-        user.verification_status || 'pending';
+      const matchesSearch =
+        !search ||
+        user.full_name?.toLowerCase().includes(search) ||
+        user.phone_number?.toLowerCase().includes(search) ||
+        user.role?.toLowerCase().includes(search) ||
+        user.lga_location?.toLowerCase().includes(search) ||
+        user.farm_name?.toLowerCase().includes(search) ||
+        user.farm_location?.toLowerCase().includes(search) ||
+        user.business_name?.toLowerCase().includes(search) ||
+        user.business_address?.toLowerCase().includes(search);
 
       const matchesRole =
-        roleFilter === 'all' || role === roleFilter;
+        roleFilter === 'all' || user.role === roleFilter;
 
       const matchesVerification =
         verificationFilter === 'all' ||
-        verification === verificationFilter;
+        user.verification_status === verificationFilter;
 
-      if (!matchesRole || !matchesVerification) {
-        return false;
-      }
-
-      if (!search) {
-        return true;
-      }
-
-      return [
-        user.full_name,
-        user.phone_number,
-        user.role,
-        user.lga_location,
-        user.verification_status,
-        user.farm_name,
-        user.farm_location,
-        user.business_name,
-        user.business_address,
-      ]
-        .filter(Boolean)
-        .some((value) =>
-          String(value)
-            .toLowerCase()
-            .includes(search)
-        );
+      return matchesSearch && matchesRole && matchesVerification;
     });
-  }, [
-    users,
-    searchTerm,
-    roleFilter,
-    verificationFilter,
-  ]);
+  }, [users, searchTerm, roleFilter, verificationFilter]);
 
-  const summary = useMemo(() => {
+  const statistics = useMemo(() => {
     return {
       total: users.length,
-
-      buyers: users.filter(
-        (user) => user.role === 'buyer'
-      ).length,
-
-      producers: users.filter(
-        (user) => user.role === 'producer'
-      ).length,
-
-      aggregators: users.filter(
-        (user) => user.role === 'aggregator'
-      ).length,
-
-      admins: users.filter(
-        (user) => user.role === 'admin'
-      ).length,
-
-      approved: users.filter(
-        (user) =>
-          user.verification_status === 'approved'
-      ).length,
-
-      pending: users.filter(
-        (user) =>
-          (user.verification_status || 'pending') ===
-          'pending'
-      ).length,
+      buyers: users.filter((user) => user.role === 'buyer').length,
+      producers: users.filter((user) => user.role === 'producer').length,
+      aggregators: users.filter((user) => user.role === 'aggregator').length,
+      admins: users.filter((user) => user.role === 'admin').length,
     };
   }, [users]);
+
+  const getRoleBadge = (role) => {
+    const styles = {
+      admin: 'bg-purple-100 text-purple-700 border-purple-200',
+      producer: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+      aggregator: 'bg-blue-100 text-blue-700 border-blue-200',
+      buyer: 'bg-amber-100 text-amber-700 border-amber-200',
+    };
+
+    const labels = {
+      admin: 'Admin',
+      producer: 'Producer',
+      aggregator: 'Aggregator',
+      buyer: 'Buyer',
+    };
+
+    return (
+      <span
+        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${
+          styles[role] || 'bg-slate-100 text-slate-700 border-slate-200'
+        }`}
+      >
+        {labels[role] || role || 'Unknown'}
+      </span>
+    );
+  };
+
+  const getVerificationBadge = (status) => {
+    const styles = {
+      approved: 'bg-emerald-100 text-emerald-700',
+      pending: 'bg-amber-100 text-amber-700',
+      rejected: 'bg-red-100 text-red-700',
+    };
+
+    const labels = {
+      approved: 'Approved',
+      pending: 'Pending',
+      rejected: 'Rejected',
+    };
+
+    return (
+      <span
+        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+          styles[status] || 'bg-slate-100 text-slate-700'
+        }`}
+      >
+        {labels[status] || status || 'Unknown'}
+      </span>
+    );
+  };
+
+  const openUserDetails = (user) => {
+    setSelectedUser(user);
+    setShowDetails(true);
+    setError('');
+    setSuccess('');
+  };
+
+  const closeUserDetails = () => {
+    setSelectedUser(null);
+    setShowDetails(false);
+  };
+
+  const formatDate = (date) => {
+    if (!date) return 'N/A';
+
+    return new Date(date).toLocaleDateString('en-NG', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
 
   const clearFilters = () => {
     setSearchTerm('');
@@ -239,1040 +186,633 @@ export function AdminUserManagement() {
     setVerificationFilter('all');
   };
 
-  const hasFilters =
-    Boolean(searchTerm.trim()) ||
-    roleFilter !== 'all' ||
-    verificationFilter !== 'all';
-
   return (
-    <div className="relative space-y-6 pb-8">
-      {/* Decorative background */}
-      <div className="pointer-events-none absolute -right-20 -top-20 -z-10 h-64 w-64 rounded-full bg-emerald-100/50 blur-3xl" />
-
-      <div className="pointer-events-none absolute left-1/3 top-[500px] -z-10 h-48 w-48 rounded-full bg-blue-100/30 blur-3xl" />
-
-      {/* Header */}
-      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
-        <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-emerald-100/60 blur-3xl" />
-
-        <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-emerald-600">
-              <UserCog className="h-4 w-4" />
-              Account Management
+    <div className="min-h-screen bg-slate-50 p-4 md:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl">
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">
+                User Management
+              </h1>
+              <p className="mt-1 text-sm text-slate-500">
+                View and manage AgroLink user accounts and profiles.
+              </p>
             </div>
 
-            <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
-              User Management
-            </h1>
-
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Manage AgroLink accounts, roles, verification
-              information, and platform access.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={fetchUsers}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 lg:self-auto"
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${
-                loading ? 'animate-spin' : ''
-              }`}
-            />
-
-            {loading ? 'Refreshing...' : 'Refresh'}
-          </button>
-        </div>
-      </section>
-
-      {/* Summary cards */}
-      <section className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <SummaryCard
-          title="Total Users"
-          value={summary.total}
-          icon={Users}
-          iconStyle="bg-slate-100 text-slate-600"
-          delay="0ms"
-        />
-
-        <SummaryCard
-          title="Buyers"
-          value={summary.buyers}
-          icon={ShoppingCart}
-          iconStyle="bg-blue-50 text-blue-600"
-          delay="60ms"
-        />
-
-        <SummaryCard
-          title="Producers"
-          value={summary.producers}
-          icon={Sprout}
-          iconStyle="bg-emerald-50 text-emerald-600"
-          delay="120ms"
-        />
-
-        <SummaryCard
-          title="Aggregators"
-          value={summary.aggregators}
-          icon={Building2}
-          iconStyle="bg-amber-50 text-amber-600"
-          delay="180ms"
-        />
-
-        <SummaryCard
-          title="Admins"
-          value={summary.admins}
-          icon={ShieldCheck}
-          iconStyle="bg-purple-50 text-purple-600"
-          delay="240ms"
-        />
-      </section>
-
-      {/* Information */}
-      <div className="flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-
-        <div>
-          <p className="font-bold">
-            Role management
-          </p>
-
-          <p className="mt-1 leading-6 text-blue-700/80">
-            Role changes affect how an account accesses
-            AgroLink. Review the account carefully before
-            changing its role.
-          </p>
-        </div>
-      </div>
-
-      {/* Search and filters */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-3 xl:flex-row">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(event) =>
-                setSearchTerm(event.target.value)
-              }
-              placeholder="Search by name, phone, farm, business or LGA..."
-              className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100"
-            />
-          </div>
-
-          <select
-            value={roleFilter}
-            onChange={(event) =>
-              setRoleFilter(event.target.value)
-            }
-            className="h-11 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100"
-          >
-            <option value="all">All roles</option>
-            <option value="buyer">Buyers</option>
-            <option value="producer">Producers</option>
-            <option value="aggregator">Aggregators</option>
-            <option value="admin">Admins</option>
-          </select>
-
-          <select
-            value={verificationFilter}
-            onChange={(event) =>
-              setVerificationFilter(event.target.value)
-            }
-            className="h-11 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100"
-          >
-            <option value="all">
-              All verification
-            </option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-
-          {hasFilters && (
             <button
-              type="button"
+              onClick={fetchUsers}
+              className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            >
+              Refresh Users
+            </button>
+          </div>
+        </div>
+
+        {/* Messages */}
+        {error && (
+          <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-semibold">Something went wrong</p>
+              <p className="mt-1">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-5 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+            <CheckCircle className="mt-0.5 h-5 w-5 shrink-0" />
+            <p>{success}</p>
+          </div>
+        )}
+
+        {/* Statistics */}
+        <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Total Users
+                </p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {statistics.total}
+                </p>
+              </div>
+              <div className="rounded-xl bg-slate-100 p-3">
+                <Users className="h-5 w-5 text-slate-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Buyers
+                </p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {statistics.buyers}
+                </p>
+              </div>
+              <div className="rounded-xl bg-amber-100 p-3">
+                <Users className="h-5 w-5 text-amber-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Producers
+                </p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {statistics.producers}
+                </p>
+              </div>
+              <div className="rounded-xl bg-emerald-100 p-3">
+                <Sprout className="h-5 w-5 text-emerald-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Aggregators
+                </p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {statistics.aggregators}
+                </p>
+              </div>
+              <div className="rounded-xl bg-blue-100 p-3">
+                <UserCheck className="h-5 w-5 text-blue-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Admins
+                </p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {statistics.admins}
+                </p>
+              </div>
+              <div className="rounded-xl bg-purple-100 p-3">
+                <ShieldCheck className="h-5 w-5 text-purple-600" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-4 lg:grid-cols-[1fr_200px_200px_auto]">
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search name, phone, role, LGA, farm or business..."
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              />
+            </div>
+
+            {/* Role filter */}
+            <div className="relative">
+              <select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-10 text-sm font-medium text-slate-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              >
+                <option value="all">All Roles</option>
+                <option value="buyer">Buyer</option>
+                <option value="producer">Producer</option>
+                <option value="aggregator">Aggregator</option>
+                <option value="admin">Admin</option>
+              </select>
+
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+
+            {/* Verification filter */}
+            <div className="relative">
+              <select
+                value={verificationFilter}
+                onChange={(e) => setVerificationFilter(e.target.value)}
+                className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-10 text-sm font-medium text-slate-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              >
+                <option value="all">All Verification</option>
+                <option value="approved">Approved</option>
+                <option value="pending">Pending</option>
+                <option value="rejected">Rejected</option>
+              </select>
+
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+
+            <button
               onClick={clearFilters}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
             >
               <X className="h-4 w-4" />
               Clear
             </button>
-          )}
-        </div>
+          </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-          <span>
+          <div className="mt-4 text-sm text-slate-500">
             Showing{' '}
-            <strong className="text-slate-700">
+            <span className="font-semibold text-slate-700">
               {filteredUsers.length}
-            </strong>{' '}
+            </span>{' '}
             of{' '}
-            <strong className="text-slate-700">
+            <span className="font-semibold text-slate-700">
               {users.length}
-            </strong>{' '}
-            accounts
-          </span>
-
-          <div className="flex flex-wrap gap-3">
-            <span>
-              Approved:{' '}
-              <strong className="text-emerald-600">
-                {summary.approved}
-              </strong>
-            </span>
-
-            <span>
-              Pending:{' '}
-              <strong className="text-amber-600">
-                {summary.pending}
-              </strong>
-            </span>
+            </span>{' '}
+            users
           </div>
         </div>
-      </section>
 
-      {/* User directory */}
-      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        {loading ? (
-          <LoadingState />
-        ) : filteredUsers.length === 0 ? (
-          <EmptyState
-            hasFilters={hasFilters}
-            clearFilters={clearFilters}
-          />
-        ) : (
-          <>
-            {/* Desktop */}
-            <div className="hidden overflow-x-auto lg:block">
-              <table className="w-full border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
-                    <th className="p-4">User</th>
-                    <th className="p-4">Role</th>
-                    <th className="p-4">Location</th>
-                    <th className="p-4">Verification</th>
-                    <th className="p-4">Joined</th>
-                    <th className="p-4 text-right">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-                  {filteredUsers.map((user, index) => (
-                    <UserTableRow
-                      key={user.id}
-                      user={user}
-                      index={index}
-                      updating={updatingId === user.id}
-                      onView={() =>
-                        setSelectedUser(user)
-                      }
-                      onRoleChange={(newRole) =>
-                        requestRoleChange(
-                          user,
-                          newRole
-                        )
-                      }
-                    />
-                  ))}
-                </tbody>
-              </table>
+        {/* Users Table */}
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {isLoading ? (
+            <div className="flex min-h-[300px] items-center justify-center">
+              <div className="text-center">
+                <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-emerald-600" />
+                <p className="text-sm font-semibold text-slate-600">
+                  Loading users...
+                </p>
+              </div>
             </div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="flex min-h-[300px] flex-col items-center justify-center px-6 text-center">
+              <div className="mb-4 rounded-full bg-slate-100 p-4">
+                <Users className="h-8 w-8 text-slate-400" />
+              </div>
 
-            {/* Mobile / tablet */}
-            <div className="grid grid-cols-1 gap-3 p-4 lg:hidden">
-              {filteredUsers.map((user, index) => (
-                <UserCard
-                  key={user.id}
-                  user={user}
-                  index={index}
-                  updating={updatingId === user.id}
-                  onView={() =>
-                    setSelectedUser(user)
-                  }
-                  onRoleChange={(newRole) =>
-                    requestRoleChange(
-                      user,
-                      newRole
-                    )
-                  }
-                />
-              ))}
+              <h3 className="text-lg font-bold text-slate-800">
+                No users found
+              </h3>
+
+              <p className="mt-1 max-w-md text-sm text-slate-500">
+                Try changing your search term or filters.
+              </p>
             </div>
-          </>
-        )}
-      </section>
+          ) : (
+            <>
+              {/* Desktop table */}
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="min-w-full">
+                  <thead className="border-b border-slate-200 bg-slate-50">
+                    <tr>
+                      <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                        User
+                      </th>
+                      <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Role
+                      </th>
+                      <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Location
+                      </th>
+                      <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Verification
+                      </th>
+                      <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Joined
+                      </th>
+                      <th className="px-5 py-4 text-right text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
 
-      {/* Details modal */}
-      {selectedUser && (
-        <UserDetailsModal
-          user={selectedUser}
-          onClose={() => setSelectedUser(null)}
-          onRoleChange={(newRole) =>
-            requestRoleChange(
-              selectedUser,
-              newRole
-            )
-          }
-          updating={updatingId === selectedUser.id}
-        />
-      )}
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredUsers.map((user) => (
+                      <tr
+                        key={user.id}
+                        className="transition hover:bg-slate-50"
+                      >
+                        <td className="px-5 py-4">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {user.full_name || 'Unnamed User'}
+                            </p>
 
-      {/* Role confirmation */}
-      {roleChange && (
-        <RoleConfirmationModal
-          user={roleChange.user}
-          newRole={roleChange.newRole}
-          loading={updatingId === roleChange.user.id}
-          onCancel={() => {
-            if (!updatingId) {
-              setRoleChange(null);
-            }
-          }}
-          onConfirm={handleRoleChange}
-        />
-      )}
+                            <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                              <Phone className="h-3.5 w-3.5" />
+                              {user.phone_number || 'No phone number'}
+                            </div>
+                          </div>
+                        </td>
 
-      <style>{`
-        @keyframes fadeUp {
-          from {
-            opacity: 0;
-            transform: translateY(8px);
-          }
+                        <td className="px-5 py-4">
+                          {getRoleBadge(user.role)}
+                        </td>
 
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      `}</style>
-    </div>
-  );
-}
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-1.5 text-sm text-slate-600">
+                            <MapPin className="h-4 w-4 text-slate-400" />
+                            {user.lga_location || 'Not provided'}
+                          </div>
+                        </td>
 
-/* --------------------------------------------------
-   Summary Card
--------------------------------------------------- */
+                        <td className="px-5 py-4">
+                          {getVerificationBadge(user.verification_status)}
+                        </td>
 
-const SummaryCard = ({
-  title,
-  value,
-  icon: Icon,
-  iconStyle,
-  delay,
-}) => {
-  return (
-    <div
-      className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-lg sm:p-5"
-      style={{
-        animation: `fadeUp 0.4s ease-out ${delay} both`,
-      }}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div
-          className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconStyle} transition duration-300 group-hover:scale-105`}
-        >
-          <Icon className="h-5 w-5" />
-        </div>
+                        <td className="px-5 py-4 text-sm text-slate-600">
+                          {formatDate(user.created_at)}
+                        </td>
 
-        <span className="text-2xl font-black text-slate-900">
-          {Number(value || 0).toLocaleString()}
-        </span>
-      </div>
+                        <td className="px-5 py-4 text-right">
+                          <button
+                            onClick={() => openUserDetails(user)}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+                          >
+                            <UserCog className="h-4 w-4" />
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
-      <p className="mt-4 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-        {title}
-      </p>
-    </div>
-  );
-};
+              {/* Mobile/tablet cards */}
+              <div className="divide-y divide-slate-100 lg:hidden">
+                {filteredUsers.map((user) => (
+                  <div key={user.id} className="p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <h3 className="truncate font-bold text-slate-900">
+                          {user.full_name || 'Unnamed User'}
+                        </h3>
 
-/* --------------------------------------------------
-   User Table Row
--------------------------------------------------- */
+                        <p className="mt-1 text-xs text-slate-500">
+                          {user.phone_number || 'No phone number'}
+                        </p>
+                      </div>
 
-const UserTableRow = ({
-  user,
-  index,
-  updating,
-  onView,
-  onRoleChange,
-}) => {
-  const isAdmin = user.role === 'admin';
+                      {getRoleBadge(user.role)}
+                    </div>
 
-  return (
-    <tr
-      className="group transition duration-200 hover:bg-slate-50"
-      style={{
-        animation: `fadeUp 0.35s ease-out ${
-          index * 30
-        }ms both`,
-      }}
-    >
-      <td className="p-4">
-        <div className="flex items-center gap-3">
-          <Avatar name={user.full_name} />
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <p className="text-xs text-slate-400">Location</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-700">
+                          {user.lga_location || 'Not provided'}
+                        </p>
+                      </div>
 
-          <div className="min-w-0">
-            <p className="truncate font-bold text-slate-900">
-              {user.full_name || 'Unnamed User'}
-            </p>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <p className="text-xs text-slate-400">Verification</p>
+                        <div className="mt-1">
+                          {getVerificationBadge(user.verification_status)}
+                        </div>
+                      </div>
+                    </div>
 
-            <p className="mt-0.5 truncate text-xs text-slate-400">
-              {user.phone_number ||
-                user.business_name ||
-                'AgroLink account'}
-            </p>
-          </div>
-        </div>
-      </td>
-
-      <td className="p-4">
-        <RoleBadge role={user.role} />
-      </td>
-
-      <td className="p-4">
-        <div className="flex max-w-[170px] items-start gap-2 text-slate-600">
-          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-
-          <span className="truncate">
-            {user.lga_location || 'Not provided'}
-          </span>
-        </div>
-      </td>
-
-      <td className="p-4">
-        <VerificationBadge
-          status={user.verification_status}
-        />
-      </td>
-
-      <td className="p-4 text-xs font-medium text-slate-500">
-        {formatDate(user.created_at)}
-      </td>
-
-      <td className="p-4">
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onView}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-          >
-            <Eye className="h-3.5 w-3.5" />
-            Details
-          </button>
-
-          <select
-            value={user.role || 'buyer'}
-            onChange={(event) =>
-              onRoleChange(event.target.value)
-            }
-            disabled={isAdmin || updating}
-            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <option value="buyer">Buyer</option>
-            <option value="producer">Producer</option>
-            <option value="aggregator">
-              Aggregator
-            </option>
-          </select>
-        </div>
-
-        {updating && (
-          <div className="mt-2 flex justify-end">
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Updating...
-            </span>
-          </div>
-        )}
-      </td>
-    </tr>
-  );
-};
-
-/* --------------------------------------------------
-   User Card
--------------------------------------------------- */
-
-const UserCard = ({
-  user,
-  index,
-  updating,
-  onView,
-  onRoleChange,
-}) => {
-  const isAdmin = user.role === 'admin';
-
-  return (
-    <div
-      className="rounded-2xl border border-slate-200 bg-white p-4 transition duration-300 hover:-translate-y-0.5 hover:shadow-md"
-      style={{
-        animation: `fadeUp 0.35s ease-out ${
-          index * 40
-        }ms both`,
-      }}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <Avatar name={user.full_name} />
-
-          <div className="min-w-0">
-            <p className="truncate font-bold text-slate-900">
-              {user.full_name || 'Unnamed User'}
-            </p>
-
-            <p className="mt-0.5 truncate text-xs text-slate-400">
-              {user.phone_number ||
-                user.business_name ||
-                'AgroLink account'}
-            </p>
-          </div>
-        </div>
-
-        <VerificationBadge
-          status={user.verification_status}
-        />
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <InfoItem
-          icon={UserCog}
-          label="Role"
-          value={formatRole(user.role)}
-        />
-
-        <InfoItem
-          icon={MapPin}
-          label="LGA"
-          value={user.lga_location}
-        />
-
-        <InfoItem
-          icon={CalendarDays}
-          label="Joined"
-          value={formatDate(user.created_at)}
-        />
-
-        <InfoItem
-          icon={ShieldCheck}
-          label="Access"
-          value={
-            isAdmin ? 'Admin protected' : 'Standard'
-          }
-        />
-      </div>
-
-      <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          onClick={onView}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50"
-        >
-          <Eye className="h-3.5 w-3.5" />
-          View Details
-        </button>
-
-        <select
-          value={user.role || 'buyer'}
-          onChange={(event) =>
-            onRoleChange(event.target.value)
-          }
-          disabled={isAdmin || updating}
-          className="max-w-[145px] flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <option value="buyer">Buyer</option>
-          <option value="producer">Producer</option>
-          <option value="aggregator">
-            Aggregator
-          </option>
-        </select>
-      </div>
-    </div>
-  );
-};
-
-/* --------------------------------------------------
-   User Details Modal
--------------------------------------------------- */
-
-const UserDetailsModal = ({
-  user,
-  onClose,
-  onRoleChange,
-  updating,
-}) => {
-  const isAdmin = user.role === 'admin';
-
-  return (
-    <ModalShell onClose={onClose}>
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
-        <div className="flex min-w-0 items-center gap-3">
-          <Avatar name={user.full_name} />
-
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-black text-slate-900">
-              {user.full_name || 'Unnamed User'}
-            </h2>
-
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <RoleBadge role={user.role} />
-
-              <VerificationBadge
-                status={user.verification_status}
-              />
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={updating}
-          className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-        >
-          <X className="h-5 w-5" />
-        </button>
-      </div>
-
-      <div className="max-h-[65vh] overflow-y-auto p-5 sm:p-6">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <DetailItem
-            icon={UserCog}
-            label="Role"
-            value={formatRole(user.role)}
-          />
-
-          <DetailItem
-            icon={ShieldCheck}
-            label="Verification"
-            value={formatRole(
-              user.verification_status ||
-                'pending'
-            )}
-          />
-
-          <DetailItem
-            icon={MapPin}
-            label="LGA"
-            value={user.lga_location}
-          />
-
-          <DetailItem
-            icon={CalendarDays}
-            label="Joined"
-            value={formatDate(user.created_at)}
-          />
-
-          <DetailItem
-            icon={Sprout}
-            label="Farm name"
-            value={user.farm_name}
-          />
-
-          <DetailItem
-            icon={MapPin}
-            label="Farm location"
-            value={user.farm_location}
-          />
-
-          <DetailItem
-            icon={Sprout}
-            label="Farm size"
-            value={user.farm_size}
-          />
-
-          <DetailItem
-            icon={Sprout}
-            label="Farm type"
-            value={user.farm_type}
-          />
-
-          <DetailItem
-            icon={Building2}
-            label="Business name"
-            value={user.business_name}
-          />
-
-          <DetailItem
-            icon={MapPin}
-            label="Business address"
-            value={user.business_address}
-          />
-
-          <DetailItem
-            icon={UserCog}
-            label="Phone number"
-            value={user.phone_number}
-          />
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-        <p className="text-xs leading-5 text-slate-400">
-          Admin accounts are protected from role changes
-          in this interface.
-        </p>
-
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-100"
-          >
-            Close
-          </button>
-
-          {!isAdmin && (
-            <select
-              value={user.role || 'buyer'}
-              onChange={(event) =>
-                onRoleChange(event.target.value)
-              }
-              disabled={updating}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:opacity-50"
-            >
-              <option value="buyer">Buyer</option>
-              <option value="producer">Producer</option>
-              <option value="aggregator">
-                Aggregator
-              </option>
-            </select>
+                    <button
+                      onClick={() => openUserDetails(user)}
+                      className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      <UserCog className="h-4 w-4" />
+                      View User Details
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
-      </div>
-    </ModalShell>
-  );
-};
 
-/* --------------------------------------------------
-   Role Confirmation Modal
--------------------------------------------------- */
+        {/* Role management notice */}
+        <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
 
-const RoleConfirmationModal = ({
-  user,
-  newRole,
-  loading,
-  onCancel,
-  onConfirm,
-}) => {
-  return (
-    <ModalShell onClose={onCancel}>
-      <div className="p-5 sm:p-6">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600">
-          <UserCog className="h-7 w-7" />
-        </div>
+            <div>
+              <h3 className="font-semibold text-blue-900">
+                Role Changes
+              </h3>
 
-        <div className="mt-5 text-center">
-          <h2 className="text-lg font-black text-slate-900">
-            Change user role?
-          </h2>
+              <p className="mt-1 text-sm leading-6 text-blue-800">
+                Existing users who want to become aggregators will submit a
+                role request. Their current role will remain unchanged until
+                an administrator reviews and approves the request.
+              </p>
 
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            You are about to change{' '}
-            <strong className="text-slate-700">
-              {user.full_name || "this user's"}
-            </strong>{' '}
-            role to{' '}
-            <strong className="text-emerald-700">
-              {formatRole(newRole)}
-            </strong>
-            .
-          </p>
-
-          <p className="mt-2 text-xs leading-5 text-slate-400">
-            This may change which areas of AgroLink the
-            account can access.
-          </p>
-        </div>
-
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-
-            {loading
-              ? 'Updating...'
-              : 'Confirm Role Change'}
-          </button>
-        </div>
-      </div>
-    </ModalShell>
-  );
-};
-
-/* --------------------------------------------------
-   Verification Badge
--------------------------------------------------- */
-
-const VerificationBadge = ({ status }) => {
-  const currentStatus = status || 'pending';
-
-  const styles = {
-    approved: 'bg-emerald-100 text-emerald-800',
-    rejected: 'bg-red-100 text-red-800',
-    pending: 'bg-amber-100 text-amber-800',
-  };
-
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
-        styles[currentStatus] || styles.pending
-      }`}
-    >
-      {currentStatus === 'approved' ? (
-        <CheckCircle className="h-3 w-3" />
-      ) : (
-        <ShieldCheck className="h-3 w-3" />
-      )}
-
-      {currentStatus}
-    </span>
-  );
-};
-
-/* --------------------------------------------------
-   Role Badge
--------------------------------------------------- */
-
-const RoleBadge = ({ role }) => {
-  const styles = {
-    admin:
-      'bg-purple-50 text-purple-700 border-purple-200',
-    producer:
-      'bg-emerald-50 text-emerald-700 border-emerald-200',
-    aggregator:
-      'bg-amber-50 text-amber-700 border-amber-200',
-    buyer:
-      'bg-blue-50 text-blue-700 border-blue-200',
-  };
-
-  return (
-    <span
-      className={`inline-flex rounded-lg border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide ${
-        styles[role] ||
-        'bg-slate-100 text-slate-600 border-slate-200'
-      }`}
-    >
-      {formatRole(role)}
-    </span>
-  );
-};
-
-/* --------------------------------------------------
-   Avatar
--------------------------------------------------- */
-
-const Avatar = ({ name }) => {
-  const initials = String(name || 'U')
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) =>
-      part.charAt(0).toUpperCase()
-    )
-    .join('');
-
-  return (
-    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-xs font-black text-white shadow-sm">
-      {initials || 'U'}
-    </div>
-  );
-};
-
-/* --------------------------------------------------
-   Info Item
--------------------------------------------------- */
-
-const InfoItem = ({
-  icon: Icon,
-  label,
-  value,
-}) => {
-  return (
-    <div className="min-w-0 rounded-xl bg-slate-50 p-3">
-      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </div>
-
-      <p className="mt-1 truncate text-xs font-semibold text-slate-700">
-        {value || 'Not provided'}
-      </p>
-    </div>
-  );
-};
-
-/* --------------------------------------------------
-   Detail Item
--------------------------------------------------- */
-
-const DetailItem = ({
-  icon: Icon,
-  label,
-  value,
-}) => {
-  return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
-        <Icon className="h-4 w-4" />
-        {label}
-      </div>
-
-      <p className="mt-2 break-words text-sm font-semibold text-slate-800">
-        {value || 'Not provided'}
-      </p>
-    </div>
-  );
-};
-
-/* --------------------------------------------------
-   Modal Shell
--------------------------------------------------- */
-
-const ModalShell = ({
-  children,
-  onClose,
-}) => {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
-      onMouseDown={(event) => {
-        if (
-          event.target ===
-          event.currentTarget
-        ) {
-          onClose();
-        }
-      }}
-    >
-      <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-        {children}
-      </div>
-    </div>
-  );
-};
-
-/* --------------------------------------------------
-   Loading
--------------------------------------------------- */
-
-const LoadingState = () => {
-  return (
-    <div className="space-y-3 p-5 sm:p-6">
-      {[1, 2, 3, 4].map((item) => (
-        <div
-          key={item}
-          className="animate-pulse rounded-2xl border border-slate-100 p-4"
-        >
-          <div className="flex items-center gap-4">
-            <div className="h-10 w-10 rounded-xl bg-slate-100" />
-
-            <div className="flex-1">
-              <div className="h-3 w-36 rounded bg-slate-100" />
-
-              <div className="mt-2 h-2.5 w-52 rounded bg-slate-100" />
+              <p className="mt-2 text-sm font-medium text-blue-900">
+                Role requests will be handled through a dedicated admin
+                workflow.
+              </p>
             </div>
-
-            <div className="hidden h-7 w-20 rounded-full bg-slate-100 sm:block" />
-
-            <div className="hidden h-8 w-28 rounded-xl bg-slate-100 lg:block" />
           </div>
         </div>
-      ))}
-    </div>
-  );
-};
-
-/* --------------------------------------------------
-   Empty State
--------------------------------------------------- */
-
-const EmptyState = ({
-  hasFilters,
-  clearFilters,
-}) => {
-  return (
-    <div className="p-10 text-center sm:p-14">
-      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
-        <Users className="h-7 w-7" />
       </div>
 
-      <h2 className="mt-4 font-black text-slate-800">
-        {hasFilters
-          ? 'No matching users'
-          : 'No users found'}
-      </h2>
+      {/* User Details Modal */}
+      {showDetails && selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  User Details
+                </h2>
+                <p className="text-sm text-slate-500">
+                  Complete account profile information
+                </p>
+              </div>
 
-      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-        {hasFilters
-          ? 'Try changing your search or filters.'
-          : 'Registered AgroLink accounts will appear here.'}
-      </p>
+              <button
+                onClick={closeUserDetails}
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
 
-      {hasFilters && (
-        <button
-          type="button"
-          onClick={clearFilters}
-          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-700"
-        >
-          Clear filters
-          <ChevronRight className="h-4 w-4" />
-        </button>
+            {/* Modal Content */}
+            <div className="max-h-[calc(90vh-150px)] overflow-y-auto p-5">
+              {/* Profile heading */}
+              <div className="mb-6 flex flex-col gap-4 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {selectedUser.full_name || 'Unnamed User'}
+                  </h3>
+
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {getRoleBadge(selectedUser.role)}
+                    {getVerificationBadge(
+                      selectedUser.verification_status
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-sm text-slate-500">
+                  Joined {formatDate(selectedUser.created_at)}
+                </div>
+              </div>
+
+              {/* Basic information */}
+              <div className="mb-6">
+                <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+                  <UserCog className="h-4 w-4" />
+                  Basic Information
+                </h3>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs text-slate-400">Full Name</p>
+                    <p className="mt-1 font-semibold text-slate-800">
+                      {selectedUser.full_name || 'Not provided'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-400">Phone Number</p>
+                    <p className="mt-1 font-semibold text-slate-800">
+                      {selectedUser.phone_number || 'Not provided'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-400">LGA Location</p>
+                    <p className="mt-1 font-semibold text-slate-800">
+                      {selectedUser.lga_location || 'Not provided'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-400">Account Role</p>
+                    <div className="mt-1">
+                      {getRoleBadge(selectedUser.role)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Producer information */}
+              {selectedUser.role === 'producer' && (
+                <div className="mb-6">
+                  <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+                    <Sprout className="h-4 w-4" />
+                    Producer Information
+                  </h3>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs text-slate-400">Farm Name</p>
+                      <p className="mt-1 font-semibold text-slate-800">
+                        {selectedUser.farm_name || 'Not provided'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-400">Farm Location</p>
+                      <p className="mt-1 font-semibold text-slate-800">
+                        {selectedUser.farm_location || 'Not provided'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-400">Farm Size</p>
+                      <p className="mt-1 font-semibold text-slate-800">
+                        {selectedUser.farm_size || 'Not provided'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-400">Farm Type</p>
+                      <p className="mt-1 font-semibold text-slate-800">
+                        {selectedUser.farm_type || 'Not provided'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Business information */}
+              {selectedUser.business_name && (
+                <div className="mb-6">
+                  <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+                    <Building2 className="h-4 w-4" />
+                    Business Information
+                  </h3>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs text-slate-400">
+                        Business Name
+                      </p>
+                      <p className="mt-1 font-semibold text-slate-800">
+                        {selectedUser.business_name}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-400">
+                        Business Address
+                      </p>
+                      <p className="mt-1 font-semibold text-slate-800">
+                        {selectedUser.business_address || 'Not provided'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Aggregator information */}
+              {selectedUser.role === 'aggregator' && (
+                <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <UserCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+
+                    <div>
+                      <h3 className="font-bold text-blue-900">
+                        Aggregator Account
+                      </h3>
+
+                      <p className="mt-1 text-sm leading-6 text-blue-800">
+                        This account is registered as an AgroLink aggregator
+                        and can represent and coordinate producers after
+                        verification.
+                      </p>
+
+                      <div className="mt-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                          Verification Status
+                        </p>
+
+                        <div className="mt-1">
+                          {getVerificationBadge(
+                            selectedUser.verification_status
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Account information */}
+              <div>
+                <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-500">
+                  <ShieldCheck className="h-4 w-4" />
+                  Account Information
+                </h3>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs text-slate-400">
+                      Verification Status
+                    </p>
+                    <div className="mt-1">
+                      {getVerificationBadge(
+                        selectedUser.verification_status
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-400">Created</p>
+                    <p className="mt-1 font-semibold text-slate-800">
+                      {formatDate(selectedUser.created_at)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-400">
+                      Last Updated
+                    </p>
+                    <p className="mt-1 font-semibold text-slate-800">
+                      {formatDate(selectedUser.updated_at)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-400">User ID</p>
+                    <p className="mt-1 break-all font-mono text-xs text-slate-700">
+                      {selectedUser.id}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-200 bg-slate-50 px-5 py-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs leading-5 text-slate-500">
+                  Role changes for existing users will be handled through the
+                  dedicated role request and approval workflow.
+                </p>
+
+                <button
+                  onClick={closeUserDetails}
+                  className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 };
 
-/* --------------------------------------------------
-   Helpers
--------------------------------------------------- */
-
-const formatRole = (role) => {
-  if (!role) {
-    return 'Unknown';
-  }
-
-  return (
-    role.charAt(0).toUpperCase() +
-    role.slice(1)
-  );
-};
-
-const formatDate = (date) => {
-  if (!date) {
-    return 'Not available';
-  }
-
-  return new Date(date).toLocaleDateString(
-    'en-NG',
-    {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    }
-  );
-};
+export default AdminUserManagement;

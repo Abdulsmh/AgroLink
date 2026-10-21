@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import React, { useCallback, useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
-  Home,
   LayoutDashboard,
   Package,
   Truck,
@@ -16,12 +15,61 @@ import {
   Menu,
   X,
   Sprout,
+  Users,
+  RefreshCw,
+  CalendarDays,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../config/supabaseClient';
 
 export const ProducerLayout = () => {
-  const { logout, userProfile } = useAuth();
+  const { logout, user, userProfile } = useAuth();
+  const location = useLocation();
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [pendingAggregatorRequests, setPendingAggregatorRequests] =
+    useState(0);
+  const [loadingRequests, setLoadingRequests] = useState(false);
+
+  const isApprovedProducer =
+    userProfile?.role === 'producer' &&
+    userProfile?.verification_status === 'approved';
+
+  const loadPendingAggregatorRequests = useCallback(async () => {
+    if (!user?.id || !isApprovedProducer) {
+      setPendingAggregatorRequests(0);
+      return;
+    }
+
+    setLoadingRequests(true);
+
+    try {
+      const { data, error } = await supabase.rpc(
+        'list_farmer_aggregator_relationships'
+      );
+
+      if (error) throw error;
+
+      const pendingCount = (
+        Array.isArray(data) ? data : []
+      ).filter(
+        (relationship) => relationship.status === 'pending'
+      ).length;
+
+      setPendingAggregatorRequests(pendingCount);
+    } catch (error) {
+      console.error(
+        'Unable to load pending aggregator request count:',
+        error
+      );
+    } finally {
+      setLoadingRequests(false);
+    }
+  }, [user?.id, isApprovedProducer]);
+
+  useEffect(() => {
+    loadPendingAggregatorRequests();
+  }, [loadPendingAggregatorRequests, location.pathname]);
 
   const navigation = [
     {
@@ -38,6 +86,19 @@ export const ProducerLayout = () => {
       name: 'Orders & Fulfillment',
       path: '/producer/orders',
       icon: Truck,
+    },
+    {
+      name: 'Pre-harvest Bookings',
+      path: '/producer/bookings',
+      icon: CalendarDays,
+      description: 'Review and respond to pre-harvest booking requests',
+    },
+    {
+      name: 'Aggregator Requests',
+      path: '/producer/aggregator-requests',
+      icon: Users,
+      badge: pendingAggregatorRequests,
+      description: 'Manage aggregator connections',
     },
     {
       name: 'Logistics & Haulage',
@@ -88,9 +149,65 @@ export const ProducerLayout = () => {
     }
   };
 
+  const renderNavigation = () => (
+    <nav
+      className="producer-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto p-4"
+      aria-label="Producer navigation"
+    >
+      <p className="mb-3 px-2 text-[10px] font-bold uppercase tracking-widest text-emerald-500">
+        Producer Workspace
+      </p>
+
+      <div className="space-y-1">
+        {navigation.map((item) => {
+          const Icon = item.icon;
+
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              onClick={closeSidebar}
+              title={item.description || item.name}
+              className={({ isActive }) =>
+                `group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold transition-all duration-200 ${
+                  isActive
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
+                    : 'text-emerald-100 hover:bg-emerald-900/80 hover:text-white'
+                }`
+              }
+            >
+              <Icon className="h-5 w-5 shrink-0 transition-transform duration-200 group-hover:scale-105" />
+
+              <span className="min-w-0 flex-1 truncate">
+                {item.name}
+              </span>
+
+              {item.path === '/producer/aggregator-requests' &&
+                loadingRequests && (
+                  <RefreshCw
+                    className="h-3.5 w-3.5 shrink-0 animate-spin opacity-70"
+                    aria-label="Refreshing requests"
+                  />
+                )}
+
+              {item.badge > 0 && (
+                <span
+                  className="inline-flex min-w-6 shrink-0 items-center justify-center rounded-full bg-amber-400 px-2 py-0.5 text-xs font-bold text-emerald-950"
+                  aria-label={`${item.badge} pending aggregator requests`}
+                >
+                  {item.badge > 99 ? '99+' : item.badge}
+                </span>
+              )}
+            </NavLink>
+          );
+        })}
+      </div>
+    </nav>
+  );
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-slate-100 font-sans">
-      {/* Mobile Backdrop */}
+      {/* Mobile backdrop */}
       {isSidebarOpen && (
         <button
           type="button"
@@ -102,43 +219,43 @@ export const ProducerLayout = () => {
 
       {/* Sidebar */}
       <aside
-        className={`
-          fixed inset-y-0 left-0 z-50
-          flex h-screen w-72 shrink-0 flex-col
-          bg-emerald-950 text-white
-          shadow-2xl
-          transition-transform duration-300 ease-in-out
-          lg:static
-          lg:z-auto
-          lg:w-72
-          lg:translate-x-0
-          lg:shadow-none
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-        `}
+        className={`fixed inset-y-0 left-0 z-50 flex h-screen w-72 shrink-0 flex-col bg-emerald-950 text-white shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:z-auto lg:w-72 lg:translate-x-0 lg:shadow-none ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
       >
-        {/* Sidebar Header */}
+        {/* Sidebar header */}
         <div className="flex h-20 shrink-0 items-center justify-between border-b border-emerald-900 px-5">
-          {/* Clickable Logo */}
           <NavLink
             to="/"
             onClick={closeSidebar}
             aria-label="Go to AgroLink homepage"
             className="flex items-center gap-3 rounded-xl outline-none transition hover:opacity-90 focus:ring-2 focus:ring-emerald-400"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 shadow-lg shadow-emerald-600/20">
-              <Sprout className="h-5 w-5 text-white" />
+            <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-emerald-600 shadow-lg shadow-emerald-600/20">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="130 85 250 250"
+                className="h-9 w-9 text-white"
+                fill="currentColor"
+                role="img"
+                aria-label="AgroLink logo"
+              >
+                <path d="M170 150C195 112 275 98 347 148C300 188 215 192 170 150Z" />
+                <path d="M160 165C148 232 185 300 240 324C256 272 246 230 214 192C196 177 178 169 160 165Z" />
+                <path d="M358 172C372 240 330 306 268 324C258 272 270 230 300 196C320 185 340 178 358 172Z" />
+              </svg>
             </div>
 
             <div>
-              <h1 className="text-base font-bold text-white">AgroLink</h1>
-
+              <h1 className="text-base font-bold text-white">
+                AgroLink
+              </h1>
               <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
                 Producer Portal
               </p>
             </div>
           </NavLink>
 
-          {/* Mobile Close Button */}
           <button
             type="button"
             onClick={closeSidebar}
@@ -149,7 +266,7 @@ export const ProducerLayout = () => {
           </button>
         </div>
 
-        {/* Producer Information */}
+        {/* Producer information */}
         <div className="shrink-0 border-b border-emerald-900 p-4">
           <div className="rounded-xl bg-emerald-900/70 p-4">
             <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
@@ -169,16 +286,13 @@ export const ProducerLayout = () => {
             {userProfile?.verification_status && (
               <div className="mt-3 flex items-center gap-2">
                 <span
-                  className={`
-                    h-2 w-2 rounded-full
-                    ${
-                      userProfile.verification_status === 'approved'
-                        ? 'bg-emerald-400'
-                        : userProfile.verification_status === 'rejected'
+                  className={`h-2 w-2 rounded-full ${
+                    userProfile.verification_status === 'approved'
+                      ? 'bg-emerald-400'
+                      : userProfile.verification_status === 'rejected'
                         ? 'bg-red-400'
                         : 'bg-amber-400'
-                    }
-                  `}
+                  }`}
                 />
 
                 <span className="text-[10px] font-semibold capitalize text-emerald-200">
@@ -189,42 +303,7 @@ export const ProducerLayout = () => {
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="producer-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
-          <p className="mb-3 px-2 text-[10px] font-bold uppercase tracking-widest text-emerald-500">
-            Producer Workspace
-          </p>
-
-          <div className="space-y-1">
-            {navigation.map((item) => {
-              const Icon = item.icon;
-
-              return (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  onClick={closeSidebar}
-                  className={({ isActive }) =>
-                    `
-                      group flex items-center gap-3 rounded-xl px-3 py-3
-                      text-sm font-semibold
-                      transition-all duration-200
-                      ${
-                        isActive
-                          ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
-                          : 'text-emerald-100 hover:bg-emerald-900/80 hover:text-white'
-                      }
-                    `
-                  }
-                >
-                  <Icon className="h-5 w-5 shrink-0 transition-transform duration-200 group-hover:scale-105" />
-
-                  <span className="truncate">{item.name}</span>
-                </NavLink>
-              );
-            })}
-          </div>
-        </nav>
+        {renderNavigation()}
 
         {/* Logout */}
         <div className="shrink-0 border-t border-emerald-900 p-4">
@@ -234,17 +313,15 @@ export const ProducerLayout = () => {
             className="group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-red-300 transition-all duration-200 hover:bg-red-500/10 hover:text-red-200"
           >
             <LogOut className="h-5 w-5 shrink-0 transition-transform duration-200 group-hover:-translate-x-0.5" />
-
             <span>Logout</span>
           </button>
         </div>
       </aside>
 
-      {/* Main Application Area */}
+      {/* Main application area */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Mobile Header */}
+        {/* Mobile header */}
         <header className="flex h-16 shrink-0 items-center border-b border-slate-200 bg-white px-4 shadow-sm lg:hidden">
-          {/* Clickable Mobile Logo */}
           <NavLink
             to="/"
             onClick={closeSidebar}
@@ -259,25 +336,24 @@ export const ProducerLayout = () => {
               <p className="text-sm font-bold leading-none text-slate-900">
                 AgroLink
               </p>
-
               <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-emerald-600">
                 Producer Portal
               </p>
             </div>
           </NavLink>
 
-          {/* Hamburger */}
           <button
             type="button"
             onClick={() => setIsSidebarOpen(true)}
             aria-label="Open navigation"
+            aria-expanded={isSidebarOpen}
             className="ml-auto flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all duration-200 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95"
           >
             <Menu className="h-5 w-5" />
           </button>
         </header>
 
-        {/* Page Content */}
+        {/* Page content */}
         <main className="producer-main-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
           <div className="w-full px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
             <Outlet />
@@ -285,7 +361,7 @@ export const ProducerLayout = () => {
         </main>
       </div>
 
-      {/* Hide Scrollbars Without Disabling Scrolling */}
+      {/* Hide scrollbars without disabling scrolling */}
       <style>
         {`
           .producer-sidebar-scrollbar,
@@ -303,3 +379,5 @@ export const ProducerLayout = () => {
     </div>
   );
 };
+
+export default ProducerLayout;

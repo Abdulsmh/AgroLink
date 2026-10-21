@@ -1,4 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -17,133 +24,145 @@ import {
   Truck,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-
 import { supabase } from '../config/supabaseClient';
-import { useAuth } from '../context/AuthContext';
 
 const CART_KEY = 'agrolink_cart';
+const CART_EVENT = 'agrolink-cart-updated';
 
-const formatNaira = (value) => {
-  return new Intl.NumberFormat('en-NG', {
+const formatNaira = (value) =>
+  new Intl.NumberFormat('en-NG', {
     style: 'currency',
     currency: 'NGN',
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(Number(value) || 0);
-};
+
+const formatNumber = (value) =>
+  new Intl.NumberFormat('en-NG', {
+    maximumFractionDigits: 2,
+  }).format(Number(value) || 0);
 
 const getImagePaths = (imagePath) => {
   if (!imagePath) return [];
 
   if (Array.isArray(imagePath)) {
-    return imagePath.filter(Boolean);
+    return imagePath.filter(
+      (item) => typeof item === 'string' && item.trim()
+    );
   }
 
-  if (typeof imagePath === 'string') {
-    const value = imagePath.trim();
+  if (typeof imagePath !== 'string') return [];
 
-    if (!value) return [];
+  const value = imagePath.trim();
+  if (!value) return [];
 
-    try {
-      const parsed = JSON.parse(value);
+  try {
+    const parsed = JSON.parse(value);
 
-      if (Array.isArray(parsed)) {
-        return parsed.filter(Boolean);
-      }
-
-      if (typeof parsed === 'string' && parsed.trim()) {
-        return [parsed.trim()];
-      }
-    } catch {
-      // Continue with fallback parsing.
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (item) => typeof item === 'string' && item.trim()
+      );
     }
 
-    return value
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
+    if (typeof parsed === 'string' && parsed.trim()) {
+      return [parsed.trim()];
+    }
+  } catch {
+    // Support older comma-separated image paths.
   }
 
-  return [];
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 };
 
 const getStorageUrl = (path) => {
-  if (!path) return null;
-
-  if (
-    path.startsWith('http://') ||
-    path.startsWith('https://') ||
-    path.startsWith('data:')
-  ) {
-    return path;
+  if (typeof path !== 'string' || !path.trim()) {
+    return null;
   }
 
-  const { data } = supabase.storage
+  const value = path.trim();
+
+  if (/^(https?:\/\/|data:)/i.test(value)) {
+    return value;
+  }
+
+  const cleanPath = value
+    .replace(/^\/+/, '')
+    .replace(/^product-images\//, '');
+
+  if (!cleanPath) return null;
+
+  const { data, error } = supabase.storage
     .from('product-images')
-    .getPublicUrl(path);
+    .getPublicUrl(cleanPath);
+
+  if (error) {
+    console.error('Could not resolve product image:', error.message);
+  }
 
   return data?.publicUrl || null;
 };
 
+const getCart = () => {
+  try {
+    const storedCart = localStorage.getItem(CART_KEY);
+
+    if (!storedCart) return [];
+
+    const parsedCart = JSON.parse(storedCart);
+
+    return Array.isArray(parsedCart) ? parsedCart : [];
+  } catch (error) {
+    console.error('Could not read AgroLink cart:', error);
+    return [];
+  }
+};
+
+const getCartQuantity = (cart) =>
+  cart.reduce((total, item) => {
+    const quantity = Number(item?.quantity);
+
+    return total + (
+      Number.isFinite(quantity) && quantity > 0
+        ? quantity
+        : 0
+    );
+  }, 0);
+
 const ProductDetails = () => {
   const { productId } = useParams();
   const navigate = useNavigate();
-
-  const { user } = useAuth();
+  const requestIdRef = useRef(0);
 
   const [product, setProduct] = useState(null);
   const [producer, setProducer] = useState(null);
-
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [error, setError] = useState('');
-
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
-
   const [cartCount, setCartCount] = useState(0);
+  const [failedImages, setFailedImages] = useState({});
 
-  /*
-   * -------------------------------------------------------
-   * CART COUNT
-   * -------------------------------------------------------
-   */
+  const loadCartCount = useCallback(() => {
+    setCartCount(getCartQuantity(getCart()));
+  }, []);
 
-  const loadCartCount = () => {
-    try {
-      const storedCart = localStorage.getItem(CART_KEY);
-
-      if (!storedCart) {
-        setCartCount(0);
+  const fetchProduct = useCallback(
+    async (showRefresh = false) => {
+      if (!productId) {
+        setError('A product ID was not provided.');
+        setProduct(null);
+        setProducer(null);
+        setLoading(false);
+        setRefreshing(false);
         return;
       }
 
-      const cart = JSON.parse(storedCart);
+      const currentRequestId = ++requestIdRef.current;
 
-      if (!Array.isArray(cart)) {
-        setCartCount(0);
-        return;
-      }
-
-      const count = cart.reduce((total, item) => {
-        return total + Number(item.quantity || 0);
-      }, 0);
-
-      setCartCount(count);
-    } catch (err) {
-      console.error('Failed to load cart count:', err);
-      setCartCount(0);
-    }
-  };
-
-  /*
-   * -------------------------------------------------------
-   * FETCH PRODUCT
-   * -------------------------------------------------------
-   */
-
-  const fetchProduct = async (showRefresh = false) => {
-    try {
       if (showRefresh) {
         setRefreshing(true);
       } else {
@@ -152,92 +171,146 @@ const ProductDetails = () => {
 
       setError('');
 
-      const { data: productData, error: productError } =
-        await supabase
-          .from('products')
-          .select('*')
-          .eq('id', productId)
-          .single();
-
-      if (productError) {
-        throw productError;
-      }
-
-      if (!productData) {
-        throw new Error('Product not found.');
-      }
-
-      setProduct(productData);
-
-      /*
-       * Producer information is loaded separately because
-       * producer_id does not rely on a products -> profiles
-       * foreign-key relationship.
-       */
-      if (productData.producer_id) {
+      try {
         const {
-          data: producerData,
-          error: producerError,
+          data: productData,
+          error: productError,
         } = await supabase
-          .from('profiles')
+          .from('products')
           .select(`
             id,
-            full_name,
-            role,
-            phone_number,
-            lga_location,
-            verification_status,
-            farm_name,
-            farm_location,
-            farm_size,
-            farm_type,
-            business_name,
-            business_address
+            producer_id,
+            crop_name,
+            description,
+            quantity,
+            unit,
+            price_per_unit,
+            location,
+            image_path,
+            product_type,
+            created_at
           `)
-          .eq('id', productData.producer_id)
+          .eq('id', productId)
           .maybeSingle();
 
-        if (producerError) {
-          console.error(
-            'Could not load producer profile:',
-            producerError.message
+        if (currentRequestId !== requestIdRef.current) return;
+
+        if (productError) throw productError;
+
+        if (!productData) {
+          throw new Error(
+            'This product could not be found or may have been removed.'
           );
         }
 
-        setProducer(producerData || null);
-      } else {
+        setProduct(productData);
         setProducer(null);
+
+        if (productData.producer_id) {
+          // Try the extended profile first. Some deployments may not
+          // contain every optional farm/business column.
+          let producerData = null;
+
+          const extendedProfile = await supabase
+            .from('profiles')
+            .select(`
+              id,
+              full_name,
+              role,
+              phone_number,
+              lga_location,
+              verification_status,
+              farm_name,
+              farm_location,
+              farm_size,
+              farm_type,
+              business_name,
+              business_address
+            `)
+            .eq('id', productData.producer_id)
+            .maybeSingle();
+
+          if (currentRequestId !== requestIdRef.current) return;
+
+          if (extendedProfile.error) {
+            console.warn(
+              'Extended producer profile unavailable; trying basic profile:',
+              extendedProfile.error.message
+            );
+
+            const basicProfile = await supabase
+              .from('profiles')
+              .select(`
+                id,
+                full_name,
+                role,
+                phone_number,
+                lga_location,
+                verification_status
+              `)
+              .eq('id', productData.producer_id)
+              .maybeSingle();
+
+            if (currentRequestId !== requestIdRef.current) return;
+
+            if (basicProfile.error) {
+              console.error(
+                'Could not load producer profile:',
+                basicProfile.error.message
+              );
+            } else {
+              producerData = basicProfile.data;
+            }
+          } else {
+            producerData = extendedProfile.data;
+          }
+
+          setProducer(producerData || null);
+        }
+
+        setSelectedImage(0);
+        setFailedImages({});
+
+        const stock = Math.max(
+          0,
+          Number(productData.quantity) || 0
+        );
+
+        setQuantity((current) => {
+          if (stock <= 0) return 1;
+
+          return Math.min(
+            Math.max(Number(current) || 1, 0.01),
+            stock
+          );
+        });
+      } catch (fetchError) {
+        if (currentRequestId !== requestIdRef.current) return;
+
+        console.error('Product details error:', fetchError);
+
+        setError(
+          fetchError?.message ||
+            'We could not load this product. Please try again.'
+        );
+
+        setProduct(null);
+        setProducer(null);
+      } finally {
+        if (currentRequestId === requestIdRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
-
-      setSelectedImage(0);
-      setQuantity(1);
-    } catch (err) {
-      console.error('Product details error:', err);
-
-      setError(
-        err?.message ||
-          'We could not load this product. Please try again.'
-      );
-
-      setProduct(null);
-      setProducer(null);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  /*
-   * -------------------------------------------------------
-   * INITIAL LOAD + REALTIME
-   * -------------------------------------------------------
-   */
+    },
+    [productId]
+  );
 
   useEffect(() => {
-    if (!productId) return;
-
     fetchProduct();
     loadCartCount();
+
+    if (!productId) return undefined;
 
     const channel = supabase
       .channel(`product-details-${productId}`)
@@ -249,282 +322,219 @@ const ProductDetails = () => {
           table: 'products',
           filter: `id=eq.${productId}`,
         },
-        () => {
-          fetchProduct(true);
-        }
+        () => fetchProduct(true)
       )
       .subscribe();
 
     return () => {
+      requestIdRef.current += 1;
       supabase.removeChannel(channel);
     };
-  }, [productId]);
-
-  /*
-   * -------------------------------------------------------
-   * CART SYNCHRONIZATION
-   * -------------------------------------------------------
-   */
+  }, [productId, fetchProduct, loadCartCount]);
 
   useEffect(() => {
-    const handleCartUpdate = () => {
-      loadCartCount();
-    };
+    const handleCartUpdate = () => loadCartCount();
 
     const handleStorage = (event) => {
-      if (event.key === CART_KEY) {
+      if (event.key === CART_KEY || event.key === null) {
         loadCartCount();
       }
     };
 
-    window.addEventListener(
-      'agrolink-cart-updated',
-      handleCartUpdate
-    );
-
+    window.addEventListener(CART_EVENT, handleCartUpdate);
     window.addEventListener('storage', handleStorage);
 
     return () => {
-      window.removeEventListener(
-        'agrolink-cart-updated',
-        handleCartUpdate
-      );
-
+      window.removeEventListener(CART_EVENT, handleCartUpdate);
       window.removeEventListener('storage', handleStorage);
     };
-  }, []);
+  }, [loadCartCount]);
 
-  /*
-   * -------------------------------------------------------
-   * PRODUCT DATA
-   * -------------------------------------------------------
-   */
-
-  const imagePaths = useMemo(() => {
-    return getImagePaths(product?.image_path);
-  }, [product?.image_path]);
-
-  const imageUrls = useMemo(() => {
-    return imagePaths
-      .map(getStorageUrl)
-      .filter(Boolean);
-  }, [imagePaths]);
+  const imageUrls = useMemo(
+    () =>
+      getImagePaths(product?.image_path)
+        .map(getStorageUrl)
+        .filter(Boolean),
+    [product?.image_path]
+  );
 
   const availableQuantity = Math.max(
     0,
-    Number(product?.quantity || 0)
+    Number(product?.quantity) || 0
   );
 
   const pricePerUnit = Math.max(
     0,
-    Number(product?.price_per_unit || 0)
+    Number(product?.price_per_unit) || 0
   );
 
-  const totalPrice = pricePerUnit * quantity;
+  const minimumQuantity =
+    availableQuantity > 0
+      ? Math.min(0.01, availableQuantity)
+      : 1;
 
-  const productTypeLabel =
-    product?.product_type === 'pre_harvest'
-      ? 'Pre-Harvest'
-      : 'Post-Harvest';
+  const safeQuantity = Math.min(
+    availableQuantity > 0 ? availableQuantity : 1,
+    Math.max(minimumQuantity, Number(quantity) || minimumQuantity)
+  );
 
-  const isPreHarvest =
-    product?.product_type === 'pre_harvest';
-
+  const totalPrice = pricePerUnit * safeQuantity;
+  const isPreHarvest = product?.product_type === 'pre_harvest';
+  const productTypeLabel = isPreHarvest ? 'Pre-Harvest' : 'Post-Harvest';
   const isOutOfStock = availableQuantity <= 0;
-
   const isLowStock =
-    availableQuantity > 0 &&
-    availableQuantity <= 10;
+    availableQuantity > 0 && availableQuantity <= 10;
 
   const producerName =
-    producer?.full_name ||
     producer?.business_name ||
+    producer?.farm_name ||
+    producer?.full_name ||
     'AgroLink Producer';
 
   const producerVerified =
     producer?.verification_status === 'approved';
 
-  /*
-   * -------------------------------------------------------
-   * QUANTITY
-   * -------------------------------------------------------
-   */
-
   const decreaseQuantity = () => {
-    setQuantity((current) => Math.max(1, current - 1));
-  };
-
-  const increaseQuantity = () => {
     setQuantity((current) =>
-      Math.min(availableQuantity, current + 1)
-    );
-  };
-
-  const handleQuantityInput = (event) => {
-    const value = Number(event.target.value);
-
-    if (!Number.isFinite(value)) {
-      setQuantity(1);
-      return;
-    }
-
-    setQuantity(
-      Math.min(
-        availableQuantity,
-        Math.max(1, Math.floor(value))
+      Math.max(
+        minimumQuantity,
+        Math.round((Number(current) - 1) * 100) / 100
       )
     );
   };
 
-  /*
-   * -------------------------------------------------------
-   * CART
-   * -------------------------------------------------------
-   *
-   * redirectToCheckout = false
-   *   -> Add to Cart and stay on this page.
-   *
-   * redirectToCheckout = true
-   *   -> Buy Now and go directly to Checkout.
-   */
+  const increaseQuantity = () => {
+    if (isOutOfStock) return;
 
-  const addToCart = (redirectToCheckout = false) => {
-    if (!product) return;
+    setQuantity((current) =>
+      Math.min(
+        availableQuantity,
+        Math.round((Number(current) + 1) * 100) / 100
+      )
+    );
+  };
 
-    if (isOutOfStock) {
-      toast.error(
-        'This product is currently out of stock.'
-      );
+  const handleQuantityInput = (event) => {
+    const rawValue = event.target.value;
+
+    if (rawValue === '') {
+      setQuantity('');
       return;
     }
 
-    if (quantity > availableQuantity) {
-      toast.error(
-        `Only ${availableQuantity} ${
-          product.unit || 'units'
-        } are available.`
-      );
+    const value = Number(rawValue);
+
+    if (!Number.isFinite(value)) return;
+
+    setQuantity(
+      Math.min(
+        availableQuantity,
+        Math.max(minimumQuantity, value)
+      )
+    );
+  };
+
+  const addToCart = (redirectToCheckout = false) => {
+    if (!product) {
+      toast.error('Product information is unavailable.');
+      return;
+    }
+
+    if (isOutOfStock) {
+      toast.error('This product is currently out of stock.');
+      return;
+    }
+
+    const selectedQuantity = Number(quantity);
+
+    if (
+      !Number.isFinite(selectedQuantity) ||
+      selectedQuantity <= 0 ||
+      selectedQuantity > availableQuantity
+    ) {
+      toast.error('Please select a valid quantity.');
       return;
     }
 
     try {
-      const storedCart =
-        localStorage.getItem(CART_KEY);
-
-      let cart = [];
-
-      if (storedCart) {
-        const parsedCart = JSON.parse(storedCart);
-
-        if (Array.isArray(parsedCart)) {
-          cart = parsedCart;
-        }
-      }
+      const cart = getCart();
 
       const existingIndex = cart.findIndex(
-        (item) => item.id === product.id
+        (item) => String(item?.id) === String(product.id)
       );
 
-      if (existingIndex !== -1) {
-        const existingItem =
-          cart[existingIndex];
+      const cartItem = {
+        id: product.id,
+        producerId: product.producer_id,
+        cropName: product.crop_name,
+        quantity: selectedQuantity,
+        availableQuantity,
+        unit: product.unit,
+        pricePerUnit,
+        location: product.location,
+        description: product.description || '',
+        imagePath: product.image_path,
+        productType: product.product_type,
+        producerName,
+      };
 
-        const newQuantity =
-          Number(existingItem.quantity || 0) +
-          quantity;
+      if (existingIndex !== -1) {
+        const existingItem = cart[existingIndex];
+        const parsedExistingQuantity = Number(existingItem?.quantity);
+
+        const existingQuantity =
+          Number.isFinite(parsedExistingQuantity) &&
+          parsedExistingQuantity > 0
+            ? parsedExistingQuantity
+            : 0;
+
+        const newQuantity = existingQuantity + selectedQuantity;
 
         if (newQuantity > availableQuantity) {
-          toast.error(
-            `You can only add up to ${availableQuantity} ${
-              product.unit || 'units'
-            } of this product.`
+          const remaining = Math.max(
+            0,
+            availableQuantity - existingQuantity
           );
+
+          toast.error(
+            remaining > 0
+              ? `You can add only ${formatNumber(remaining)} more ${product.unit || 'units'}.`
+              : 'Your cart already contains the available stock for this product.'
+          );
+
           return;
         }
 
         cart[existingIndex] = {
           ...existingItem,
+          ...cartItem,
           quantity: newQuantity,
-          availableQuantity,
-          pricePerUnit,
-          producerName,
         };
       } else {
-        cart.push({
-          id: product.id,
-          producerId: product.producer_id,
-          cropName: product.crop_name,
-          quantity,
-          availableQuantity,
-          unit: product.unit,
-          pricePerUnit,
-          location: product.location,
-          imagePath: product.image_path,
-          productType: product.product_type,
-          producerName,
-        });
+        cart.push(cartItem);
       }
 
-      localStorage.setItem(
-        CART_KEY,
-        JSON.stringify(cart)
-      );
+      localStorage.setItem(CART_KEY, JSON.stringify(cart));
 
       loadCartCount();
+      window.dispatchEvent(new Event(CART_EVENT));
 
-      /*
-       * Notify Navbar, Cart and other components
-       * immediately that the cart has changed.
-       */
-      window.dispatchEvent(
-        new Event('agrolink-cart-updated')
-      );
+      toast.success(`${product.crop_name} added to your cart.`);
 
-      /*
-       * Buy Now goes directly to Checkout.
-       * Add to Cart stays on Product Details.
-       */
       if (redirectToCheckout) {
-        toast.success(
-          `${product.crop_name} added to cart.`
-        );
-
         navigate('/checkout');
-        return;
       }
-
-      toast.success(
-        `${product.crop_name} added to your cart.`
-      );
-    } catch (err) {
-      console.error(
-        'Add to cart error:',
-        err
-      );
-
-      toast.error(
-        'Could not add this product to your cart.'
-      );
+    } catch (cartError) {
+      console.error('Add to cart error:', cartError);
+      toast.error('Could not update your cart. Please try again.');
     }
   };
-
-  const handleBuyNow = () => {
-    addToCart(true);
-  };
-
-  /*
-   * -------------------------------------------------------
-   * GALLERY
-   * -------------------------------------------------------
-   */
 
   const showPreviousImage = () => {
     if (imageUrls.length <= 1) return;
 
     setSelectedImage((current) =>
-      current === 0
-        ? imageUrls.length - 1
-        : current - 1
+      current <= 0 ? imageUrls.length - 1 : current - 1
     );
   };
 
@@ -532,141 +542,111 @@ const ProductDetails = () => {
     if (imageUrls.length <= 1) return;
 
     setSelectedImage((current) =>
-      current === imageUrls.length - 1
-        ? 0
-        : current + 1
+      current >= imageUrls.length - 1 ? 0 : current + 1
     );
   };
-
-  /*
-   * -------------------------------------------------------
-   * LOADING STATE
-   * -------------------------------------------------------
-   */
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 px-4 py-12 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl">
-          <div className="animate-pulse space-y-8">
-            <div className="h-6 w-32 rounded bg-slate-200" />
-
-            <div className="grid gap-8 lg:grid-cols-2">
-              <div className="aspect-square rounded-3xl bg-slate-200" />
-
-              <div className="space-y-5">
-                <div className="h-6 w-28 rounded bg-slate-200" />
-                <div className="h-12 w-3/4 rounded bg-slate-200" />
-                <div className="h-8 w-1/3 rounded bg-slate-200" />
-                <div className="h-24 rounded bg-slate-200" />
-                <div className="h-16 rounded bg-slate-200" />
-              </div>
+        <div className="mx-auto max-w-7xl animate-pulse space-y-8">
+          <div className="h-6 w-32 rounded bg-slate-200" />
+          <div className="grid gap-8 lg:grid-cols-2">
+            <div className="aspect-square rounded-3xl bg-slate-200" />
+            <div className="space-y-5">
+              <div className="h-6 w-28 rounded bg-slate-200" />
+              <div className="h-12 w-3/4 rounded bg-slate-200" />
+              <div className="h-8 w-1/3 rounded bg-slate-200" />
+              <div className="h-24 rounded bg-slate-200" />
+              <div className="h-16 rounded bg-slate-200" />
             </div>
           </div>
         </div>
       </div>
     );
   }
-
-  /*
-   * -------------------------------------------------------
-   * ERROR STATE
-   * -------------------------------------------------------
-   */
 
   if (error || !product) {
     return (
       <div className="min-h-screen bg-slate-50 px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-xl">
-          <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm sm:p-12">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-red-50">
-              <AlertCircle className="h-8 w-8 text-red-500" />
-            </div>
-
-            <h1 className="text-2xl font-bold text-slate-900">
-              Product unavailable
-            </h1>
-
-            <p className="mt-3 text-sm leading-6 text-slate-600">
-              {error ||
-                'This product could not be found or may have been removed.'}
-            </p>
-
-            <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => fetchProduct()}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-700"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Try Again
-              </button>
-
-              <Link
-                to="/catalog"
-                className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-              >
-                Back to Marketplace
-              </Link>
-            </div>
+        <div className="mx-auto max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm sm:p-12">
+          <AlertCircle className="mx-auto mb-5 h-12 w-12 text-red-500" />
+          <h1 className="text-2xl font-bold text-slate-900">
+            Product unavailable
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            {error || 'This product could not be found or may have been removed.'}
+          </p>
+          <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => fetchProduct()}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Try Again
+            </button>
+            <Link
+              to="/catalog"
+              className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Back to Marketplace
+            </Link>
           </div>
         </div>
       </div>
     );
   }
 
-  /*
-   * -------------------------------------------------------
-   * MAIN UI
-   * -------------------------------------------------------
-   */
-
   return (
     <main className="min-h-screen bg-slate-50">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-        {/* TOP NAVIGATION */}
-
         <div className="mb-6 flex items-center justify-between gap-4">
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="inline-flex items-center gap-2 rounded-xl px-2 py-2 text-sm font-semibold text-slate-600 transition hover:bg-white hover:text-emerald-700"
+            className="inline-flex items-center gap-2 rounded-xl px-2 py-2 text-sm font-semibold text-slate-600 hover:bg-white hover:text-emerald-700"
           >
             <ArrowLeft className="h-4 w-4" />
-            <span>Back</span>
+            Back
           </button>
 
           <Link
             to="/cart"
-            className="relative inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:border-emerald-200 hover:text-emerald-700"
+            className="relative inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:border-emerald-200 hover:text-emerald-700"
           >
             <ShoppingCart className="h-4 w-4" />
-
-            <span className="hidden sm:inline">
-              Cart
-            </span>
-
+            <span className="hidden sm:inline">Cart</span>
             {cartCount > 0 && (
               <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-600 px-1.5 text-[11px] font-bold text-white">
-                {cartCount > 99 ? '99+' : cartCount}
+                {cartCount > 99 ? '99+' : formatNumber(cartCount)}
               </span>
             )}
           </Link>
         </div>
 
-        {/* PRODUCT SECTION */}
+        {refreshing && (
+          <div className="mb-4 flex items-center gap-2 text-xs font-medium text-emerald-700" role="status">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            Updating product information...
+          </div>
+        )}
 
         <section className="grid gap-8 lg:grid-cols-2 lg:items-start">
-          {/* IMAGE GALLERY */}
-
           <div className="lg:sticky lg:top-24">
             <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="relative aspect-square overflow-hidden bg-slate-100">
-                {imageUrls.length > 0 ? (
+                {imageUrls.length > 0 && !failedImages[imageUrls[selectedImage]] ? (
                   <img
                     src={imageUrls[selectedImage]}
-                    alt={product.crop_name}
-                    className="h-full w-full object-cover transition duration-500"
+                    alt={product.crop_name || 'Agricultural product'}
+                    onError={() =>
+                      setFailedImages((current) => ({
+                        ...current,
+                        [imageUrls[selectedImage]]: true,
+                      }))
+                    }
+                    className="h-full w-full object-cover"
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center">
@@ -674,29 +654,19 @@ const ProductDetails = () => {
                   </div>
                 )}
 
-                {/* PRODUCT TYPE */}
-
-                <div className="absolute left-4 top-4">
-                  <span
-                    className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-bold shadow-sm ${
-                      isPreHarvest
-                        ? 'bg-amber-100 text-amber-800'
-                        : 'bg-emerald-100 text-emerald-800'
-                    }`}
-                  >
-                    {productTypeLabel}
-                  </span>
-                </div>
-
-                {/* VERIFIED */}
+                <span className={`absolute left-4 top-4 rounded-full px-3 py-1.5 text-xs font-bold shadow-sm ${
+                  isPreHarvest
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {productTypeLabel}
+                </span>
 
                 {producerVerified && (
-                  <div className="absolute right-4 top-4">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm backdrop-blur">
-                      <ShieldCheck className="h-4 w-4" />
-                      Verified Producer
-                    </span>
-                  </div>
+                  <span className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm">
+                    <ShieldCheck className="h-4 w-4" />
+                    Verified Producer
+                  </span>
                 )}
 
                 {imageUrls.length > 1 && (
@@ -705,32 +675,24 @@ const ProductDetails = () => {
                       type="button"
                       onClick={showPreviousImage}
                       aria-label="Previous product image"
-                      className="absolute left-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-lg backdrop-blur transition hover:bg-white"
+                      className="absolute left-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-lg"
                     >
                       <ChevronLeft className="h-5 w-5" />
                     </button>
-
                     <button
                       type="button"
                       onClick={showNextImage}
                       aria-label="Next product image"
-                      className="absolute right-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-lg backdrop-blur transition hover:bg-white"
+                      className="absolute right-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-lg"
                     >
                       <ChevronRight className="h-5 w-5" />
                     </button>
+                    <span className="absolute bottom-4 right-4 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white">
+                      {selectedImage + 1} / {imageUrls.length}
+                    </span>
                   </>
                 )}
-
-                {/* IMAGE COUNT */}
-
-                {imageUrls.length > 1 && (
-                  <div className="absolute bottom-4 right-4 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white backdrop-blur">
-                    {selectedImage + 1} / {imageUrls.length}
-                  </div>
-                )}
               </div>
-
-              {/* THUMBNAILS */}
 
               {imageUrls.length > 1 && (
                 <div className="flex gap-3 overflow-x-auto p-4">
@@ -738,20 +700,31 @@ const ProductDetails = () => {
                     <button
                       key={`${image}-${index}`}
                       type="button"
-                      onClick={() =>
-                        setSelectedImage(index)
-                      }
-                      className={`h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl border-2 transition ${
+                      onClick={() => setSelectedImage(index)}
+                      aria-label={`View product image ${index + 1}`}
+                      aria-pressed={selectedImage === index}
+                      className={`h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl border-2 ${
                         selectedImage === index
                           ? 'border-emerald-600 ring-2 ring-emerald-100'
-                          : 'border-slate-200 hover:border-emerald-300'
+                          : 'border-slate-200'
                       }`}
                     >
-                      <img
-                        src={image}
-                        alt={`${product.crop_name} ${index + 1}`}
-                        className="h-full w-full object-cover"
-                      />
+                      {!failedImages[image] ? (
+                        <img
+                          src={image}
+                          alt={`${product.crop_name || 'Product'} ${index + 1}`}
+                          onError={() =>
+                            setFailedImages((current) => ({
+                              ...current,
+                              [image]: true,
+                            }))
+                          }
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <Package className="mx-auto h-8 w-8 text-slate-300" />
+                      )}
                     </button>
                   ))}
                 </div>
@@ -759,23 +732,17 @@ const ProductDetails = () => {
             </div>
           </div>
 
-          {/* PRODUCT INFORMATION */}
-
           <div className="space-y-6">
-            {/* TITLE */}
-
             <div>
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-wide text-emerald-700">
                   {product.unit || 'Unit'}
                 </span>
-
                 {isLowStock && (
                   <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">
                     Low Stock
                   </span>
                 )}
-
                 {isOutOfStock && (
                   <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-bold text-red-700">
                     Out of Stock
@@ -794,51 +761,38 @@ const ProductDetails = () => {
                     {product.location}
                   </span>
                 )}
-
                 <span className="inline-flex items-center gap-1.5">
                   <Package className="h-4 w-4 text-emerald-600" />
-                  {availableQuantity}{' '}
-                  {product.unit || 'units'} available
+                  {formatNumber(availableQuantity)} {product.unit || 'units'} available
                 </span>
               </div>
             </div>
-
-            {/* PRICE */}
 
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5">
               <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">
                 Price
               </p>
-
               <div className="mt-1 flex flex-wrap items-baseline gap-2">
                 <span className="text-3xl font-black text-slate-900">
                   {formatNaira(pricePerUnit)}
                 </span>
-
                 <span className="text-sm font-medium text-slate-500">
                   per {product.unit || 'unit'}
                 </span>
               </div>
-
               <p className="mt-2 text-sm text-slate-600">
                 Current marketplace listing price.
               </p>
             </div>
-
-            {/* PRODUCER */}
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-start gap-4">
                 <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                   <Store className="h-6 w-6" />
                 </div>
-
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="font-bold text-slate-900">
-                      {producerName}
-                    </h2>
-
+                    <h2 className="font-bold text-slate-900">{producerName}</h2>
                     {producerVerified && (
                       <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
                         <CheckCircle2 className="h-3.5 w-3.5" />
@@ -855,36 +809,32 @@ const ProductDetails = () => {
 
                   <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                     {producer?.lga_location && (
-                      <span>
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin className="h-3.5 w-3.5" />
                         {producer.lga_location}
                       </span>
                     )}
-
-                    {producer?.farm_type && (
-                      <span>
-                        {producer.farm_type}
-                      </span>
-                    )}
-
-                    {producer?.business_name && (
-                      <span>
-                        {producer.business_name}
-                      </span>
-                    )}
+                    {producer?.farm_type && <span>{producer.farm_type}</span>}
+                    {producer?.business_name &&
+                      producer.business_name !== producerName && (
+                        <span>{producer.business_name}</span>
+                      )}
+                    {producer?.farm_location && <span>{producer.farm_location}</span>}
                   </div>
+
+                  {!producer && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Producer profile details are currently unavailable.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* PURCHASE CARD */}
-
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-bold text-slate-900">
-                    Quantity
-                  </p>
-
+                  <p className="text-sm font-bold text-slate-900">Quantity</p>
                   <p className="mt-1 text-xs text-slate-500">
                     Select how much you want to order.
                   </p>
@@ -894,44 +844,41 @@ const ProductDetails = () => {
                   <button
                     type="button"
                     onClick={decreaseQuantity}
-                    disabled={
-                      quantity <= 1 ||
-                      isOutOfStock
-                    }
-                    className="flex h-11 w-11 items-center justify-center rounded-l-xl text-slate-600 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={Number(quantity) <= minimumQuantity || isOutOfStock}
                     aria-label="Decrease quantity"
+                    className="flex h-11 w-11 items-center justify-center rounded-l-xl text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Minus className="h-4 w-4" />
                   </button>
 
                   <input
                     type="number"
-                    min="1"
+                    min={minimumQuantity}
                     max={availableQuantity}
+                    step="any"
                     value={quantity}
                     onChange={handleQuantityInput}
+                    onBlur={() => {
+                      if (quantity === '' || !Number.isFinite(Number(quantity))) {
+                        setQuantity(minimumQuantity);
+                      }
+                    }}
                     disabled={isOutOfStock}
-                    className="h-11 w-16 border-x border-slate-200 bg-white text-center text-sm font-bold text-slate-900 outline-none"
                     aria-label="Product quantity"
+                    className="h-11 w-20 border-x border-slate-200 bg-white text-center text-sm font-bold text-slate-900 outline-none"
                   />
 
                   <button
                     type="button"
                     onClick={increaseQuantity}
-                    disabled={
-                      quantity >=
-                        availableQuantity ||
-                      isOutOfStock
-                    }
-                    className="flex h-11 w-11 items-center justify-center rounded-r-xl text-slate-600 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={Number(quantity) >= availableQuantity || isOutOfStock}
                     aria-label="Increase quantity"
+                    className="flex h-11 w-11 items-center justify-center rounded-r-xl text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Plus className="h-4 w-4" />
                   </button>
                 </div>
               </div>
-
-              {/* ORDER TOTAL */}
 
               <div className="my-5 border-t border-slate-100 pt-5">
                 <div className="flex items-end justify-between gap-4">
@@ -939,37 +886,31 @@ const ProductDetails = () => {
                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       Estimated total
                     </p>
-
                     <p className="mt-1 text-xs text-slate-400">
-                      {quantity} ×{' '}
-                      {formatNaira(pricePerUnit)}
+                      {formatNumber(safeQuantity)} × {formatNaira(pricePerUnit)}
                     </p>
                   </div>
-
                   <p className="text-2xl font-black text-emerald-700">
                     {formatNaira(totalPrice)}
                   </p>
                 </div>
               </div>
 
-              {/* ACTIONS */}
-
               <div className="grid gap-3 sm:grid-cols-2">
                 <button
                   type="button"
                   onClick={() => addToCart(false)}
                   disabled={isOutOfStock}
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-emerald-600 bg-white px-4 py-3 text-sm font-bold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-emerald-600 bg-white px-4 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
                 >
                   <ShoppingCart className="h-5 w-5" />
                   Add to Cart
                 </button>
-
                 <button
                   type="button"
-                  onClick={handleBuyNow}
+                  onClick={() => addToCart(true)}
                   disabled={isOutOfStock}
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                 >
                   Buy Now
                 </button>
@@ -982,106 +923,77 @@ const ProductDetails = () => {
               ) : (
                 <p className="mt-4 text-center text-xs leading-5 text-slate-500">
                   You can add products to your cart before signing in.
-                  Your order will be confirmed at checkout.
+                  Your order will be validated at checkout.
                 </p>
               )}
             </div>
 
-            {/* TRUST INFORMATION */}
-
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <ShieldCheck className="h-5 w-5 text-emerald-600" />
-
-                <p className="mt-3 text-sm font-bold text-slate-900">
-                  Trusted Listing
-                </p>
-
+                <p className="mt-3 text-sm font-bold text-slate-900">Trusted Listing</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   Product information is supplied through the AgroLink marketplace.
                 </p>
               </div>
-
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <Truck className="h-5 w-5 text-emerald-600" />
-
-                <p className="mt-3 text-sm font-bold text-slate-900">
-                  Flexible Delivery
-                </p>
-
+                <p className="mt-3 text-sm font-bold text-slate-900">Pickup Arrangements</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Delivery or pickup details are arranged during the order process.
+                  Collection arrangements are confirmed during the order process.
                 </p>
               </div>
-
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-                <p className="mt-3 text-sm font-bold text-slate-900">
-                  Clear Ordering
-                </p>
-
+                <p className="mt-3 text-sm font-bold text-slate-900">Clear Ordering</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Current price and availability are checked again at checkout.
+                  Availability and price must be validated before an order is placed.
                 </p>
               </div>
             </div>
           </div>
         </section>
 
-        {/* PRODUCT INFORMATION */}
-
         <section className="mt-10 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="mb-6">
             <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">
               Product Information
             </p>
-
             <h2 className="mt-1 text-2xl font-black text-slate-900">
               About this listing
             </h2>
           </div>
 
+          {product.description && (
+            <div className="mb-6 rounded-2xl bg-slate-50 p-5">
+              <h3 className="text-sm font-bold text-slate-900">
+                Product description
+              </h3>
+              <p className="mt-2 whitespace-pre-line text-sm leading-7 text-slate-600">
+                {product.description}
+              </p>
+            </div>
+          )}
+
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-2xl bg-slate-50 p-5">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Crop
-              </p>
-
-              <p className="mt-2 font-bold capitalize text-slate-900">
-                {product.crop_name}
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Crop</p>
+              <p className="mt-2 font-bold capitalize text-slate-900">{product.crop_name}</p>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-5">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Available</p>
+              <p className="mt-2 font-bold text-slate-900">
+                {formatNumber(availableQuantity)} {product.unit || 'units'}
               </p>
             </div>
-
             <div className="rounded-2xl bg-slate-50 p-5">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Available
-              </p>
-
-              <p className="mt-2 font-bold text-slate-900">
-                {availableQuantity}{' '}
-                {product.unit || 'units'}
-              </p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Product Type</p>
+              <p className="mt-2 font-bold text-slate-900">{productTypeLabel}</p>
             </div>
-
             <div className="rounded-2xl bg-slate-50 p-5">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Product Type
-              </p>
-
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Location</p>
               <p className="mt-2 font-bold text-slate-900">
-                {productTypeLabel}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 p-5">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Location
-              </p>
-
-              <p className="mt-2 font-bold text-slate-900">
-                {product.location ||
-                  'Not specified'}
+                {product.location || 'Not specified'}
               </p>
             </div>
           </div>
@@ -1090,9 +1002,7 @@ const ProductDetails = () => {
             <div className="mt-6 border-t border-slate-100 pt-5">
               <p className="text-xs text-slate-400">
                 Listed on{' '}
-                {new Date(
-                  product.created_at
-                ).toLocaleDateString('en-NG', {
+                {new Date(product.created_at).toLocaleDateString('en-NG', {
                   day: 'numeric',
                   month: 'long',
                   year: 'numeric',
@@ -1102,33 +1012,25 @@ const ProductDetails = () => {
           )}
         </section>
 
-        {/* OFFLINE PAYMENT NOTICE */}
-
         <section className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5">
           <div className="flex items-start gap-3">
             <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600" />
-
             <div>
-              <h3 className="font-bold text-amber-900">
-                Payment and delivery
-              </h3>
-
+              <h3 className="font-bold text-amber-900">Payment and collection</h3>
               <p className="mt-1 text-sm leading-6 text-amber-800">
-                AgroLink currently helps buyers and producers create and
-                manage orders. Payment is arranged directly between the
-                buyer and producer rather than being collected online by
-                AgroLink.
+                AgroLink helps buyers and producers create and manage orders.
+                Payment is arranged directly between the buyer and producer
+                rather than collected online by AgroLink. Collection arrangements
+                are confirmed during the order process.
               </p>
             </div>
           </div>
         </section>
 
-        {/* BOTTOM ACTION */}
-
         <div className="mt-8 flex justify-center">
           <Link
             to="/catalog"
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-emerald-200 hover:text-emerald-700"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm hover:border-emerald-200 hover:text-emerald-700"
           >
             <ArrowLeft className="h-4 w-4" />
             Continue Shopping
@@ -1142,7 +1044,6 @@ const ProductDetails = () => {
             opacity: 0;
             transform: translateY(12px);
           }
-
           to {
             opacity: 1;
             transform: translateY(0);

@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -6,11 +7,28 @@ import {
   Loader2,
   LockKeyhole,
   Mail,
-  Sprout,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 import { useAuth } from '../context/AuthContext';
+
+// Reusable AgroLink SVG logo from AdminLayout.jsx.
+const AgroLinkLogo = ({ className = 'h-11 w-11' }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="130 85 250 250"
+    className={className}
+    fill="currentColor"
+    role="img"
+    aria-label="AgroLink logo"
+  >
+    <path d="M170 150C195 112 275 98 347 148C300 188 215 192 170 150Z" />
+
+    <path d="M160 165C148 232 185 300 240 324C256 272 246 230 214 192C196 177 178 169 160 165Z" />
+
+    <path d="M358 172C372 240 330 306 268 324C258 272 270 230 300 196C320 185 340 178 358 172Z" />
+  </svg>
+);
 
 export const Login = () => {
   const navigate = useNavigate();
@@ -43,11 +61,9 @@ export const Login = () => {
 
     if (currentRole === 'admin') {
       navigate('/admin/dashboard', { replace: true });
-    } else if (
-      currentRole === 'producer' ||
-      currentRole === 'aggregator' ||
-      currentRole === 'agent'
-    ) {
+    } else if (currentRole === 'aggregator') {
+      navigate('/aggregator/dashboard', { replace: true });
+    } else if (currentRole === 'producer') {
       navigate('/producer/dashboard', { replace: true });
     } else if (currentRole === 'buyer') {
       navigate('/buyer/dashboard', { replace: true });
@@ -87,12 +103,17 @@ export const Login = () => {
   return (
     <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-slate-100 px-4 py-10">
       <div className="grid w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl lg:grid-cols-2">
+
         {/* Brand panel */}
-        <section className="hidden flex-col justify-between bg-gradient-to-br from-emerald-700 via-emerald-800 to-slate-900 p-10 text-white lg:flex">
+        <section className="hidden flex-col justify-between bg-gradient-to-br from-emerald-700 via-emerald-800 to-slate-950 p-10 text-white lg:flex">
           <div>
-            <Link to="/" className="inline-flex items-center gap-3">
-              <span className="rounded-2xl bg-white/15 p-3">
-                <Sprout size={28} />
+            <Link
+              to="/"
+              aria-label="AgroLink homepage"
+              className="inline-flex items-center gap-3 rounded-xl outline-none transition hover:opacity-90 focus:ring-2 focus:ring-emerald-400"
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 shadow-lg shadow-emerald-950/20">
+                <AgroLinkLogo className="h-11 w-11 text-white" />
               </span>
 
               <span className="text-2xl font-black tracking-tight">
@@ -124,10 +145,17 @@ export const Login = () => {
         {/* Login form */}
         <section className="p-6 sm:p-10 lg:p-12">
           <div className="mx-auto max-w-md">
+
             <div className="mb-8 text-center lg:text-left">
-              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 lg:mx-0">
-                <Sprout size={30} />
-              </div>
+
+              {/* Mobile AgroLink logo */}
+              <Link
+                to="/"
+                aria-label="AgroLink homepage"
+                className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 shadow-lg shadow-emerald-600/20 outline-none transition hover:bg-emerald-700 focus:ring-4 focus:ring-emerald-100 lg:mx-0"
+              >
+                <AgroLinkLogo className="h-11 w-11 text-white" />
+              </Link>
 
               <h2 className="text-3xl font-black tracking-tight text-slate-900">
                 Sign in
@@ -139,6 +167,8 @@ export const Login = () => {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
+
+              {/* Email */}
               <div>
                 <label
                   htmlFor="email"
@@ -165,7 +195,7 @@ export const Login = () => {
                   />
                 </div>
               </div>
-
+              {/* Password */}
               <div>
                 <label
                   htmlFor="password"
@@ -208,6 +238,7 @@ export const Login = () => {
                 </div>
               </div>
 
+              {/* Submit */}
               <button
                 type="submit"
                 disabled={isSubmitting || authLoading}
@@ -224,6 +255,7 @@ export const Login = () => {
               </button>
             </form>
 
+            {/* Registration link */}
             <p className="mt-8 text-center text-sm text-slate-600">
               Do not have an account?{' '}
               <Link
@@ -234,6 +266,7 @@ export const Login = () => {
               </Link>
             </p>
 
+            {/* Homepage link */}
             <Link
               to="/"
               className="mt-5 block text-center text-sm font-semibold text-slate-500 transition hover:text-emerald-700"

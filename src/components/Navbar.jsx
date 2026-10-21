@@ -1,3 +1,4 @@
+
 import React, {
   useEffect,
   useMemo,
@@ -12,7 +13,6 @@ import {
   LogOut,
   Menu,
   ShoppingBag,
-  Sprout,
   User,
   X,
 } from 'lucide-react';
@@ -28,15 +28,35 @@ import { useAuth } from '../context/AuthContext';
 const CART_KEY = 'agrolink_cart';
 const LIKES_KEY = 'agrilink_likes_count';
 
+/**
+ * AgroLink's official three-leaf SVG logo.
+ * Keep this consistent across the application.
+ */
+const AgroLinkLogo = ({ className = 'h-9 w-9' }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="130 85 250 250"
+    className={className}
+    fill="currentColor"
+    role="img"
+    aria-label="AgroLink logo"
+  >
+    <path d="M170 150C195 112 275 98 347 148C300 188 215 192 170 150Z" />
+    <path d="M160 165C148 232 185 300 240 324C256 272 246 230 214 192C196 177 178 169 160 165Z" />
+    <path d="M358 172C372 240 330 306 268 324C258 272 270 230 300 196C320 185 340 178 358 172Z" />
+  </svg>
+);
+
 const getDashboardPath = (role) => {
   switch (role) {
     case 'admin':
       return '/admin/dashboard';
 
     case 'producer':
-    case 'aggregator':
-    case 'agent':
       return '/producer/dashboard';
+
+    case 'aggregator':
+      return '/aggregator/dashboard';
 
     case 'buyer':
       return '/buyer/dashboard';
@@ -49,9 +69,10 @@ const getDashboardPath = (role) => {
 const getProfilePath = (role) => {
   switch (role) {
     case 'producer':
-    case 'aggregator':
-    case 'agent':
       return '/producer/profile';
+
+    case 'aggregator':
+      return '/aggregator/profile';
 
     case 'buyer':
       return '/buyer/dashboard';
@@ -80,10 +101,7 @@ export const Navbar = () => {
   const [cartCount, setCartCount] = useState(0);
   const [likesCount, setLikesCount] = useState(0);
 
-  const currentRole =
-    userRole ||
-    userProfile?.role ||
-    null;
+  const currentRole = userRole || userProfile?.role || null;
 
   const dashboardPath = useMemo(
     () => getDashboardPath(currentRole),
@@ -95,22 +113,9 @@ export const Navbar = () => {
     [currentRole]
   );
 
-  /*
-   * Read cart from localStorage.
-   *
-   * The current AgroLink cart uses:
-   * item.quantity
-   *
-   * Older cart data may use:
-   * item.cartQuantity
-   *
-   * Supporting both prevents the navbar from becoming
-   * inconsistent after previous cart changes.
-   */
   const updateCartCount = () => {
     try {
-      const savedCart =
-        localStorage.getItem(CART_KEY);
+      const savedCart = localStorage.getItem(CART_KEY);
 
       if (!savedCart) {
         setCartCount(0);
@@ -124,51 +129,40 @@ export const Navbar = () => {
         return;
       }
 
-      const count = cart.reduce(
-        (total, item) => {
-          const quantity =
-            item.quantity ??
-            item.cartQuantity ??
-            1;
+      const count = cart.reduce((total, item) => {
+        const quantity = item.quantity ?? item.cartQuantity ?? 1;
+        const parsedQuantity = Number(quantity);
 
-          return total + Number(quantity || 0);
-        },
-        0
-      );
+        return total + (
+          Number.isFinite(parsedQuantity) && parsedQuantity > 0
+            ? parsedQuantity
+            : 0
+        );
+      }, 0);
 
       setCartCount(count);
     } catch (error) {
-      console.error(
-        'Unable to read cart:',
-        error
-      );
-
+      console.error('Unable to read cart:', error);
       setCartCount(0);
     }
   };
 
   const updateLikesCount = () => {
     try {
-      const savedLikes =
-        localStorage.getItem(LIKES_KEY);
+      const savedLikes = localStorage.getItem(LIKES_KEY);
+      const parsedLikes = Number(savedLikes || 0);
 
       setLikesCount(
-        Number(savedLikes || 0)
+        Number.isFinite(parsedLikes) && parsedLikes > 0
+          ? parsedLikes
+          : 0
       );
     } catch (error) {
-      console.error(
-        'Unable to read likes count:',
-        error
-      );
-
+      console.error('Unable to read likes count:', error);
       setLikesCount(0);
     }
   };
 
-  /*
-   * Keep navbar cart/wishlist indicators
-   * synchronized with the rest of AgroLink.
-   */
   useEffect(() => {
     updateCartCount();
     updateLikesCount();
@@ -205,10 +199,6 @@ export const Navbar = () => {
     };
   }, []);
 
-  /*
-   * Close account dropdown when clicking
-   * outside of it.
-   */
   useEffect(() => {
     const handleOutsideClick = (event) => {
       if (
@@ -219,10 +209,7 @@ export const Navbar = () => {
       }
     };
 
-    document.addEventListener(
-      'mousedown',
-      handleOutsideClick
-    );
+    document.addEventListener('mousedown', handleOutsideClick);
 
     return () => {
       document.removeEventListener(
@@ -232,10 +219,6 @@ export const Navbar = () => {
     };
   }, []);
 
-  /*
-   * Close mobile menu when screen becomes
-   * desktop-sized.
-   */
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth >= 768) {
@@ -243,16 +226,10 @@ export const Navbar = () => {
       }
     };
 
-    window.addEventListener(
-      'resize',
-      handleResize
-    );
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      window.removeEventListener(
-        'resize',
-        handleResize
-      );
+      window.removeEventListener('resize', handleResize);
     };
   }, []);
 
@@ -264,25 +241,17 @@ export const Navbar = () => {
   const handleLogout = async () => {
     try {
       await logout();
-
       closeMenus();
 
-      toast.success(
-        'You have been logged out.'
-      );
+      toast.success('You have been logged out.');
 
       navigate('/login', {
         replace: true,
       });
     } catch (error) {
-      console.error(
-        'Logout error:',
-        error
-      );
+      console.error('Logout error:', error);
 
-      toast.error(
-        'Unable to logout. Please try again.'
-      );
+      toast.error('Unable to logout. Please try again.');
     }
   };
 
@@ -293,18 +262,14 @@ export const Navbar = () => {
         : 'text-slate-600 hover:bg-slate-100 hover:text-emerald-700'
     }`;
 
-  const mobileNavLinkClass = ({
-    isActive,
-  }) =>
+  const mobileNavLinkClass = ({ isActive }) =>
     `block rounded-xl px-4 py-3 text-sm font-bold transition ${
       isActive
         ? 'bg-emerald-50 text-emerald-700'
         : 'text-slate-700 hover:bg-slate-100 hover:text-emerald-700'
     }`;
 
-  const displayName =
-    userProfile?.full_name ||
-    'My Account';
+  const displayName = userProfile?.full_name || 'My Account';
 
   const initials = (
     userProfile?.full_name ||
@@ -315,94 +280,80 @@ export const Navbar = () => {
     .charAt(0)
     .toUpperCase();
 
+  const showProfileLink = [
+    'producer',
+    'aggregator',
+  ].includes(currentRole);
+
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur-xl">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-20 items-center justify-between gap-4">
 
-          {/* Logo */}
+          {/* Official AgroLink logo */}
           <Link
             to="/"
             onClick={closeMenus}
             className="group flex flex-shrink-0 items-center gap-3"
+            aria-label="AgroLink home"
           >
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 transition duration-300 group-hover:rotate-6 group-hover:scale-105">
-              <Sprout size={25} />
+            <span className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 transition duration-300 group-hover:rotate-6 group-hover:scale-105">
+              <AgroLinkLogo />
             </span>
 
             <span className="text-2xl font-black tracking-tight text-slate-900">
               Agro
-              <span className="text-emerald-600">
-                Link
-              </span>
+              <span className="text-emerald-600">Link</span>
             </span>
           </Link>
 
-          {/* Desktop Navigation */}
-          <nav className="hidden items-center gap-1 lg:flex">
-            <NavLink
-              to="/"
-              className={navLinkClass}
-            >
+          {/* Desktop navigation */}
+          <nav
+            aria-label="Main navigation"
+            className="hidden items-center gap-1 lg:flex"
+          >
+            <NavLink to="/" end className={navLinkClass}>
               Home
             </NavLink>
 
-            <NavLink
-              to="/catalog"
-              className={navLinkClass}
-            >
+            <NavLink to="/catalog" className={navLinkClass}>
               Marketplace
             </NavLink>
 
-            <NavLink
-              to="/pre-harvest"
-              className={navLinkClass}
-            >
+            <NavLink to="/pre-harvest" className={navLinkClass}>
               Pre-Harvest
             </NavLink>
 
-            <NavLink
-              to="/post-harvest"
-              className={navLinkClass}
-            >
+            <NavLink to="/post-harvest" className={navLinkClass}>
               Post-Harvest
             </NavLink>
 
-            <NavLink
-              to="/about"
-              className={navLinkClass}
-            >
+            <NavLink to="/about" className={navLinkClass}>
               About
             </NavLink>
 
-            <NavLink
-              to="/contact"
-              className={navLinkClass}
-            >
+            <NavLink to="/contact" className={navLinkClass}>
               Contact
             </NavLink>
           </nav>
 
-          {/* Desktop Actions */}
+          {/* Desktop actions */}
           <div className="hidden items-center gap-2 md:flex">
 
-            {/* Cart */}
+            {/* Shopping cart */}
             <Link
               to="/cart"
+              onClick={closeMenus}
               className="relative rounded-xl p-3 text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-700"
               aria-label={`Shopping cart${
-                cartCount > 0
-                  ? `, ${cartCount} items`
-                  : ''
+                cartCount > 0 ? `, ${cartCount} items` : ''
               }`}
             >
               <ShoppingBag size={21} />
 
               {cartCount > 0 && (
                 <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-black text-white shadow-sm">
-                  {cartCount > 99
-                    ? '99+'
-                    : cartCount}
+                  {cartCount > 99 ? '99+' : cartCount}
                 </span>
               )}
             </Link>
@@ -410,11 +361,7 @@ export const Navbar = () => {
             {/* Wishlist */}
             <button
               type="button"
-              onClick={() =>
-                toast(
-                  'Wishlist is coming soon.'
-                )
-              }
+              onClick={() => toast('Wishlist is coming soon.')}
               className="relative rounded-xl p-3 text-slate-600 transition hover:bg-rose-50 hover:text-rose-600"
               aria-label="Wishlist"
             >
@@ -422,31 +369,20 @@ export const Navbar = () => {
 
               {likesCount > 0 && (
                 <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white">
-                  {likesCount > 99
-                    ? '99+'
-                    : likesCount}
+                  {likesCount > 99 ? '99+' : likesCount}
                 </span>
               )}
             </button>
 
             {user ? (
-              <div
-                ref={accountRef}
-                className="relative"
-              >
+              <div ref={accountRef} className="relative">
+
                 {/* Account button */}
                 <button
                   type="button"
-                  onClick={() =>
-                    setIsAccountOpen(
-                      (previous) =>
-                        !previous
-                    )
-                  }
+                  onClick={() => setIsAccountOpen((previous) => !previous)}
                   className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 transition hover:border-emerald-300 hover:bg-emerald-50"
-                  aria-expanded={
-                    isAccountOpen
-                  }
+                  aria-expanded={isAccountOpen}
                   aria-haspopup="menu"
                 >
                   <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 font-black text-emerald-700">
@@ -459,17 +395,14 @@ export const Navbar = () => {
                     </span>
 
                     <span className="block text-xs capitalize text-slate-500">
-                      {currentRole ||
-                        'User'}
+                      {currentRole || 'User'}
                     </span>
                   </span>
 
                   <ChevronDown
                     size={16}
                     className={`hidden text-slate-400 transition duration-200 xl:block ${
-                      isAccountOpen
-                        ? 'rotate-180'
-                        : ''
+                      isAccountOpen ? 'rotate-180' : ''
                     }`}
                   />
                 </button>
@@ -480,7 +413,6 @@ export const Navbar = () => {
                     className="absolute right-0 mt-3 w-72 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl"
                     role="menu"
                   >
-                    {/* Account header */}
                     <div className="border-b border-slate-100 px-3 py-3">
                       <div className="flex items-center gap-3">
                         <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-emerald-100 font-black text-emerald-700">
@@ -499,127 +431,78 @@ export const Navbar = () => {
                       </div>
                     </div>
 
-                    {/* Dashboard */}
                     <Link
                       to={dashboardPath}
                       onClick={closeMenus}
                       role="menuitem"
                       className="mt-2 flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
                     >
-                      <LayoutDashboard
-                        size={18}
-                      />
-
+                      <LayoutDashboard size={18} />
                       Dashboard
                     </Link>
 
-                    {/* Buyer links */}
-                    {currentRole ===
-                      'buyer' && (
+                    {currentRole === 'buyer' && (
                       <>
                         <Link
                           to="/buyer/orders"
-                          onClick={
-                            closeMenus
-                          }
+                          onClick={closeMenus}
                           role="menuitem"
                           className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
                         >
-                          <ClipboardList
-                            size={18}
-                          />
-
+                          <ClipboardList size={18} />
                           My Orders
-
-                          {cartCount >
-                            0 && (
-                            <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
-                              Buyer
-                            </span>
-                          )}
                         </Link>
 
                         <Link
                           to="/cart"
-                          onClick={
-                            closeMenus
-                          }
+                          onClick={closeMenus}
                           role="menuitem"
                           className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
                         >
-                          <ShoppingBag
-                            size={18}
-                          />
-
+                          <ShoppingBag size={18} />
                           View Cart
 
-                          {cartCount >
-                            0 && (
+                          {cartCount > 0 && (
                             <span className="ml-auto rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white">
-                              {cartCount >
-                              99
-                                ? '99+'
-                                : cartCount}
+                              {cartCount > 99 ? '99+' : cartCount}
                             </span>
                           )}
                         </Link>
                       </>
                     )}
 
-                    {/* Producer profile */}
-                    {(currentRole ===
-                      'producer' ||
-                      currentRole ===
-                        'aggregator' ||
-                      currentRole ===
-                        'agent') && (
+                    {showProfileLink && (
                       <Link
-                        to={
-                          profilePath
-                        }
-                        onClick={
-                          closeMenus
-                        }
+                        to={profilePath}
+                        onClick={closeMenus}
                         role="menuitem"
                         className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
                       >
                         <User size={18} />
-
                         My Profile
                       </Link>
                     )}
 
-                    {/* Admin settings */}
-                    {currentRole ===
-                      'admin' && (
+                    {currentRole === 'admin' && (
                       <Link
                         to="/admin/settings"
-                        onClick={
-                          closeMenus
-                        }
+                        onClick={closeMenus}
                         role="menuitem"
                         className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
                       >
                         <User size={18} />
-
                         Settings
                       </Link>
                     )}
 
-                    {/* Sign out */}
                     <div className="mt-1 border-t border-slate-100 pt-1">
                       <button
                         type="button"
-                        onClick={
-                          handleLogout
-                        }
+                        onClick={handleLogout}
                         role="menuitem"
                         className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-bold text-red-600 transition hover:bg-red-50"
                       >
-                        <LogOut
-                          size={18}
-                        />
-
+                        <LogOut size={18} />
                         Sign Out
                       </button>
                     </div>
@@ -645,44 +528,31 @@ export const Navbar = () => {
             )}
           </div>
 
-          {/* Mobile Menu Button */}
+          {/* Mobile menu toggle */}
           <button
             type="button"
-            onClick={() =>
-              setIsMenuOpen(
-                (previous) =>
-                  !previous
-              )
-            }
+            onClick={() => setIsMenuOpen((previous) => !previous)}
             className="rounded-xl p-3 text-slate-700 transition hover:bg-slate-100 md:hidden"
-            aria-label={
-              isMenuOpen
-                ? 'Close menu'
-                : 'Open menu'
-            }
-            aria-expanded={
-              isMenuOpen
-            }
+            aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={isMenuOpen}
+            aria-controls="agrolink-mobile-menu"
           >
-            {isMenuOpen ? (
-              <X size={24} />
-            ) : (
-              <Menu size={24} />
-            )}
+            {isMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
         </div>
 
-        {/* Mobile Navigation */}
+        {/* Mobile navigation */}
         {isMenuOpen && (
-          <div className="border-t border-slate-100 py-4 md:hidden">
-
-            <nav className="space-y-1">
+          <div
+            id="agrolink-mobile-menu"
+            className="border-t border-slate-100 py-4 md:hidden"
+          >
+            <nav aria-label="Mobile navigation" className="space-y-1">
               <NavLink
                 to="/"
+                end
                 onClick={closeMenus}
-                className={
-                  mobileNavLinkClass
-                }
+                className={mobileNavLinkClass}
               >
                 Home
               </NavLink>
@@ -690,9 +560,7 @@ export const Navbar = () => {
               <NavLink
                 to="/catalog"
                 onClick={closeMenus}
-                className={
-                  mobileNavLinkClass
-                }
+                className={mobileNavLinkClass}
               >
                 Marketplace
               </NavLink>
@@ -700,9 +568,7 @@ export const Navbar = () => {
               <NavLink
                 to="/pre-harvest"
                 onClick={closeMenus}
-                className={
-                  mobileNavLinkClass
-                }
+                className={mobileNavLinkClass}
               >
                 Pre-Harvest
               </NavLink>
@@ -710,9 +576,7 @@ export const Navbar = () => {
               <NavLink
                 to="/post-harvest"
                 onClick={closeMenus}
-                className={
-                  mobileNavLinkClass
-                }
+                className={mobileNavLinkClass}
               >
                 Post-Harvest
               </NavLink>
@@ -720,9 +584,7 @@ export const Navbar = () => {
               <NavLink
                 to="/about"
                 onClick={closeMenus}
-                className={
-                  mobileNavLinkClass
-                }
+                className={mobileNavLinkClass}
               >
                 About
               </NavLink>
@@ -730,35 +592,25 @@ export const Navbar = () => {
               <NavLink
                 to="/contact"
                 onClick={closeMenus}
-                className={
-                  mobileNavLinkClass
-                }
+                className={mobileNavLinkClass}
               >
                 Contact
               </NavLink>
             </nav>
 
-            {/* Mobile actions */}
+            {/* Mobile cart and dashboard/login */}
             <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4">
-
               <Link
                 to="/cart"
                 onClick={closeMenus}
                 className="relative flex items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700"
               >
-                <ShoppingBag
-                  size={18}
-                />
-
+                <ShoppingBag size={18} />
                 Cart
 
-                {cartCount >
-                  0 && (
+                {cartCount > 0 && (
                   <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-black text-white">
-                    {cartCount >
-                    99
-                      ? '99+'
-                      : cartCount}
+                    {cartCount > 99 ? '99+' : cartCount}
                   </span>
                 )}
               </Link>
@@ -769,10 +621,7 @@ export const Navbar = () => {
                   onClick={closeMenus}
                   className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white"
                 >
-                  <LayoutDashboard
-                    size={18}
-                  />
-
+                  <LayoutDashboard size={18} />
                   Dashboard
                 </Link>
               ) : (
@@ -782,71 +631,51 @@ export const Navbar = () => {
                   className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white"
                 >
                   <User size={18} />
-
                   Login
                 </Link>
               )}
             </div>
 
-            {/* Authenticated mobile actions */}
+            {/* Authenticated mobile account actions */}
             {user && (
               <div className="mt-3 space-y-1 border-t border-slate-100 pt-3">
-
                 <div className="mb-2 rounded-xl bg-slate-50 px-4 py-3">
                   <p className="truncate text-sm font-black text-slate-900">
                     {displayName}
                   </p>
 
                   <p className="mt-1 truncate text-xs capitalize text-slate-500">
-                    {currentRole ||
-                      'User'}
+                    {currentRole || 'User'}
                   </p>
                 </div>
 
-                {currentRole ===
-                  'buyer' && (
+                {currentRole === 'buyer' && (
                   <>
                     <Link
                       to="/buyer/orders"
-                      onClick={
-                        closeMenus
-                      }
-                      className={
-                        mobileNavLinkClass
-                      }
+                      onClick={closeMenus}
+                      className={mobileNavLinkClass}
                     >
                       <span className="flex items-center gap-3">
-                        <ClipboardList
-                          size={18}
-                        />
+                        <ClipboardList size={18} />
                         My Orders
                       </span>
                     </Link>
 
                     <Link
                       to="/cart"
-                      onClick={
-                        closeMenus
-                      }
-                      className={
-                        mobileNavLinkClass
-                      }
+                      onClick={closeMenus}
+                      className={mobileNavLinkClass}
                     >
                       <span className="flex items-center justify-between gap-3">
                         <span className="flex items-center gap-3">
-                          <ShoppingBag
-                            size={18}
-                          />
+                          <ShoppingBag size={18} />
                           View Cart
                         </span>
 
-                        {cartCount >
-                          0 && (
+                        {cartCount > 0 && (
                           <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
-                            {cartCount >
-                            99
-                              ? '99+'
-                              : cartCount}
+                            {cartCount > 99 ? '99+' : cartCount}
                           </span>
                         )}
                       </span>
@@ -854,22 +683,11 @@ export const Navbar = () => {
                   </>
                 )}
 
-                {(currentRole ===
-                  'producer' ||
-                  currentRole ===
-                    'aggregator' ||
-                  currentRole ===
-                    'agent') && (
+                {showProfileLink && (
                   <Link
-                    to={
-                      profilePath
-                    }
-                    onClick={
-                      closeMenus
-                    }
-                    className={
-                      mobileNavLinkClass
-                    }
+                    to={profilePath}
+                    onClick={closeMenus}
+                    className={mobileNavLinkClass}
                   >
                     <span className="flex items-center gap-3">
                       <User size={18} />
@@ -878,17 +696,25 @@ export const Navbar = () => {
                   </Link>
                 )}
 
+                {currentRole === 'admin' && (
+                  <Link
+                    to="/admin/settings"
+                    onClick={closeMenus}
+                    className={mobileNavLinkClass}
+                  >
+                    <span className="flex items-center gap-3">
+                      <User size={18} />
+                      Settings
+                    </span>
+                  </Link>
+                )}
+
                 <button
                   type="button"
-                  onClick={
-                    handleLogout
-                  }
+                  onClick={handleLogout}
                   className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-black text-red-600 transition hover:bg-red-50"
                 >
-                  <LogOut
-                    size={18}
-                  />
-
+                  <LogOut size={18} />
                   Sign Out
                 </button>
               </div>
