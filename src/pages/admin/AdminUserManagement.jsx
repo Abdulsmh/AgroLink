@@ -536,29 +536,7 @@ const AdminUserManagement = () => {
           )}
         </div>
 
-        {/* Role management notice */}
-        <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4">
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
-
-            <div>
-              <h3 className="font-semibold text-blue-900">
-                Role Changes
-              </h3>
-
-              <p className="mt-1 text-sm leading-6 text-blue-800">
-                Existing users who want to become aggregators will submit a
-                role request. Their current role will remain unchanged until
-                an administrator reviews and approves the request.
-              </p>
-
-              <p className="mt-2 text-sm font-medium text-blue-900">
-                Role requests will be handled through a dedicated admin
-                workflow.
-              </p>
-            </div>
-          </div>
-        </div>
+        
       </div>
 
       {/* User Details Modal */}

@@ -269,22 +269,7 @@ export const AdminMarketPricing = () => {
         </button>
       </div>
 
-      {/* Data notice */}
-      <div className="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
-
-        <div>
-          <p className="text-xs font-bold text-blue-800">
-            AgroLink Marketplace Benchmark
-          </p>
-
-          <p className="mt-1 text-xs leading-5 text-blue-700">
-            These figures are calculated from prices currently listed on
-            AgroLink. They should not be presented as official external
-            market quotations from Dawanau, Kadawa or other markets.
-          </p>
-        </div>
-      </div>
+      
 
       {/* Statistics */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

@@ -245,20 +245,7 @@ export const AdminProducerApprovals = () => {
         />
       </section>
 
-      {/* Information */}
-      <div className="flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-
-        <div>
-          <p className="font-bold">Verification control</p>
-
-          <p className="mt-1 leading-6 text-blue-700/80">
-            Approving or rejecting an account updates its verification
-            status in the user's AgroLink profile. Only authorized
-            administrators can change this status.
-          </p>
-        </div>
-      </div>
+      
 
       {/* Search + Filters */}
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">

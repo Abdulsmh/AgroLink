@@ -43,23 +43,6 @@ export const AdminSettings = () => {
         </div>
       </div>
 
-      {/* Configuration notice */}
-      <div className="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
-
-        <div>
-          <p className="text-xs font-bold text-blue-800">
-            Configuration storage
-          </p>
-
-          <p className="mt-1 text-xs leading-5 text-blue-700">
-            These settings are currently interface-level controls.
-            Persistent platform settings will require a dedicated
-            configuration table in Supabase.
-          </p>
-        </div>
-      </div>
-
       {/* Main Settings */}
       <div className="space-y-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 lg:p-8">
         <div>
@@ -205,27 +188,6 @@ export const AdminSettings = () => {
         </div>
       </div>
 
-      {/* Future configuration */}
-      <div className="rounded-3xl border border-slate-200 bg-slate-900 p-6 text-white shadow-sm sm:p-8">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10">
-            <Settings className="h-5 w-5 text-emerald-300" />
-          </div>
-
-          <div>
-            <h3 className="text-sm font-black">
-              Future platform controls
-            </h3>
-
-            <p className="mt-2 max-w-3xl text-xs leading-6 text-slate-300">
-              A dedicated platform settings table can later store
-              commission rates, verification requirements, marketplace
-              policies, notification preferences, transaction limits and
-              other administrator-controlled settings.
-            </p>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

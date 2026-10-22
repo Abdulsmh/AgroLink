@@ -224,23 +224,7 @@ export const AdminDisputes = () => {
         </div>
       </div>
 
-      {/* Database limitation notice */}
-      <div className="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
-
-        <div>
-          <p className="text-xs font-bold text-blue-800">
-            Resolution workflow status
-          </p>
-
-          <p className="mt-1 text-xs leading-5 text-blue-700">
-            AgroLink currently stores transaction orders but does not yet
-            have a dedicated disputes or escrow table. This page therefore
-            monitors real order records, with cancelled orders highlighted
-            for administrative attention.
-          </p>
-        </div>
-      </div>
+      
 
       {/* Statistics */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -334,27 +318,7 @@ export const AdminDisputes = () => {
         )}
       </div>
 
-      {/* Future workflow */}
-      <div className="rounded-3xl border border-slate-200 bg-slate-900 p-6 text-white shadow-sm sm:p-8">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10">
-            <ShieldAlert className="h-5 w-5 text-amber-300" />
-          </div>
-
-          <div>
-            <h3 className="text-base font-black">
-              Full dispute management can be added next
-            </h3>
-
-            <p className="mt-2 max-w-3xl text-xs leading-6 text-slate-300">
-              A dedicated disputes table can later support dispute reasons,
-              evidence, messages, admin decisions, resolution status,
-              refunds and escrow handling without modifying the existing
-              order workflow.
-            </p>
-          </div>
-        </div>
-      </div>
+     
     </div>
   );
 };

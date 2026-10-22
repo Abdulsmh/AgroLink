@@ -773,23 +773,7 @@ const AdminRoleRequests = () => {
         </button>
       </header>
 
-      {/* WORKFLOW NOTICE */}
-      <section className="flex gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4">
-        <Info className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" />
-
-        <div>
-          <p className="text-sm font-bold text-blue-950">
-            Role approval and account verification are separate
-          </p>
-
-          <p className="mt-1 text-sm leading-6 text-blue-900">
-            Approving a role request changes the applicant's role to
-            Aggregator and sets account verification to pending. The
-            account must pass the separate verification process before
-            features protected by that verification can be used.
-          </p>
-        </div>
-      </section>
+     
 
       {/* SUMMARY CARDS */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
