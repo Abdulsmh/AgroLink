@@ -13,12 +13,47 @@ import {
   CalendarDays,
   ClipboardCheck,
   Sprout,
+  UserRound,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
+const STATUS_STYLES = {
+  approved: {
+    dot: 'bg-emerald-400',
+    text: 'text-emerald-300',
+    label: 'Approved',
+  },
+  rejected: {
+    dot: 'bg-red-400',
+    text: 'text-red-300',
+    label: 'Rejected',
+  },
+  pending: {
+    dot: 'bg-amber-400',
+    text: 'text-amber-300',
+    label: 'Pending',
+  },
+};
+
+const getDisplayName = (profile) => {
+  const name = profile?.full_name?.trim();
+  return name || 'Aggregator';
+};
+
+const getBusinessLabel = (profile) => {
+  return (
+    profile?.business_name?.trim() ||
+    profile?.business_address?.trim() ||
+    'AgroLink Field Partner'
+  );
+};
+
 export const AggregatorLayout = () => {
-  const { logout, userProfile } = useAuth();
+  const { logout, userProfile, isLoading } = useAuth();
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const navigation = [
     {
@@ -68,25 +103,31 @@ export const AggregatorLayout = () => {
   };
 
   const handleLogout = async () => {
+    if (isLoggingOut) return;
+
     closeSidebar();
+    setIsLoggingOut(true);
 
     try {
       await logout();
     } catch (error) {
       console.error('Aggregator logout error:', error);
+    } finally {
+      setIsLoggingOut(false);
     }
   };
 
-  const verificationStatus =
-    userProfile?.verification_status || 'pending';
+  const verificationStatus = String(
+    userProfile?.verification_status || 'pending'
+  )
+    .toLowerCase()
+    .replace(/\s+/g, '_');
 
-  const statusStyles = {
-    approved: 'bg-emerald-400',
-    rejected: 'bg-red-400',
-    pending: 'bg-amber-400',
-  };
+  const status =
+    STATUS_STYLES[verificationStatus] || STATUS_STYLES.pending;
 
-  const formattedStatus = verificationStatus.replace(/_/g, ' ');
+  const displayName = getDisplayName(userProfile);
+  const businessLabel = getBusinessLabel(userProfile);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-slate-100 font-sans">
@@ -105,19 +146,10 @@ export const AggregatorLayout = () => {
         className={`
           fixed inset-y-0 left-0 z-50
           flex h-screen w-72 shrink-0 flex-col
-          bg-slate-950 text-white
-          shadow-2xl
+          bg-slate-950 text-white shadow-2xl
           transition-transform duration-300 ease-in-out
-          lg:static
-          lg:z-auto
-          lg:w-64
-          lg:translate-x-0
-          lg:shadow-none
-          ${
-            isSidebarOpen
-              ? 'translate-x-0'
-              : '-translate-x-full'
-          }
+          lg:static lg:z-auto lg:w-64 lg:translate-x-0 lg:shadow-none
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
       >
         {/* BRAND */}
@@ -147,7 +179,6 @@ export const AggregatorLayout = () => {
               <h1 className="text-base font-bold text-white">
                 AgroLink
               </h1>
-
               <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
                 Aggregator Portal
               </p>
@@ -167,37 +198,54 @@ export const AggregatorLayout = () => {
         {/* AGGREGATOR PROFILE */}
         <div className="shrink-0 border-b border-slate-800 p-4">
           <div className="rounded-xl bg-slate-900 p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              Aggregator Account
-            </p>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-800">
+                <UserRound
+                  className="h-5 w-5 text-emerald-400"
+                  aria-hidden="true"
+                />
+              </div>
 
-            <p className="mt-2 truncate text-sm font-bold text-white">
-              {userProfile?.full_name || 'Aggregator'}
-            </p>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-white">
+                  {isLoading && !userProfile
+                    ? 'Loading profile...'
+                    : displayName}
+                </p>
 
-            <p className="mt-1 truncate text-xs text-slate-400">
-              {userProfile?.business_name ||
-                userProfile?.business_address ||
-                'AgroLink Field Partner'}
-            </p>
+                <p className="mt-1 truncate text-xs text-slate-400">
+                  {businessLabel}
+                </p>
+              </div>
+            </div>
 
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-4 flex items-center gap-2 border-t border-slate-800 pt-3">
               <span
-                className={`h-2 w-2 shrink-0 rounded-full ${
-                  statusStyles[verificationStatus] ||
-                  statusStyles.pending
-                }`}
+                className={`h-2 w-2 shrink-0 rounded-full ${status.dot}`}
+                aria-hidden="true"
               />
 
-              <span className="text-[10px] font-semibold capitalize text-slate-400">
-                Verification: {formattedStatus}
+              <span className={`text-[10px] font-semibold ${status.text}`}>
+                Verification: {status.label}
               </span>
             </div>
+
+            <NavLink
+              to="/aggregator/profile"
+              onClick={closeSidebar}
+              className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 transition hover:text-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              View profile
+            </NavLink>
           </div>
         </div>
 
         {/* NAVIGATION */}
-        <nav className="aggregator-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
+        <nav
+          aria-label="Aggregator navigation"
+          className="aggregator-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto p-4"
+        >
           <p className="mb-3 px-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
             Aggregator Workspace
           </p>
@@ -220,7 +268,6 @@ export const AggregatorLayout = () => {
                   }
                 >
                   <Icon className="h-5 w-5 shrink-0 transition-transform duration-200 group-hover:scale-105" />
-
                   <span className="truncate">{item.name}</span>
                 </NavLink>
               );
@@ -233,11 +280,13 @@ export const AggregatorLayout = () => {
           <button
             type="button"
             onClick={handleLogout}
-            className="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold text-slate-300 transition-all duration-200 hover:bg-red-500/10 hover:text-red-400"
+            disabled={isLoggingOut}
+            className="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold text-slate-300 transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <LogOut className="h-5 w-5 shrink-0 transition-transform duration-200 group-hover:-translate-x-0.5" />
-
-            <span>Logout</span>
+            <span>
+              {isLoggingOut ? 'Logging out...' : 'Logout'}
+            </span>
           </button>
         </div>
       </aside>
@@ -260,7 +309,6 @@ export const AggregatorLayout = () => {
               <p className="text-sm font-bold leading-none text-slate-900">
                 AgroLink
               </p>
-
               <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-emerald-600">
                 Aggregator Portal
               </p>
@@ -271,6 +319,7 @@ export const AggregatorLayout = () => {
             type="button"
             onClick={() => setIsSidebarOpen(true)}
             aria-label="Open navigation"
+            aria-expanded={isSidebarOpen}
             className="ml-auto flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all duration-200 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95"
           >
             <Menu className="h-5 w-5" />

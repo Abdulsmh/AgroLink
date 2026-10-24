@@ -1,3 +1,4 @@
+
 import React from 'react';
 import {
   BrowserRouter as Router,
@@ -60,6 +61,7 @@ import AggregatorOrders from './pages/aggregator/AggregatorOrders';
 import AggregatorProfile from './pages/aggregator/AggregatorProfile';
 import AggregatorBulkRequests from './pages/aggregator/AggregatorBulkRequests';
 import AggregatorBookings from './pages/aggregator/AggregatorBookings';
+import AggregatorFarmerRecords from './pages/aggregator/AggregatorFarmerRecords';
 
 // Admin layout and pages
 import { AdminLayout } from './components/layouts/AdminLayout';
@@ -204,63 +206,20 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            {/* /buyer redirects to the buyer dashboard */}
             <Route
               index
               element={<Navigate to="/buyer/dashboard" replace />}
             />
 
-            <Route
-              path="dashboard"
-              element={<BuyerDashboard />}
-            />
-
-            {/* Buyer marketplace */}
-            <Route
-              path="catalog"
-              element={<Catalog />}
-            />
-
-            {/* Pre-harvest product browsing */}
-            <Route
-              path="pre-harvest"
-              element={<PreHarvest />}
-            />
-
-            {/* Buyer booking history and cancellation */}
-            <Route
-              path="bookings"
-              element={<BuyerBookings />}
-            />
-
-            {/* Post-harvest product browsing */}
-            <Route
-              path="post-harvest"
-              element={<PostHarvest />}
-            />
-
-            {/* Shopping cart */}
-            <Route
-              path="cart"
-              element={<Cart />}
-            />
-
-            {/* Buyer orders */}
-            <Route
-              path="orders"
-              element={<BuyerOrders />}
-            />
-
-            {/* Bulk requests */}
-            <Route
-              path="bulk-request"
-              element={<BuyerBulkRequest />}
-            />
-
-            <Route
-              path="bulk-requests"
-              element={<BuyerBulkRequests />}
-            />
+            <Route path="dashboard" element={<BuyerDashboard />} />
+            <Route path="catalog" element={<Catalog />} />
+            <Route path="pre-harvest" element={<PreHarvest />} />
+            <Route path="bookings" element={<BuyerBookings />} />
+            <Route path="post-harvest" element={<PostHarvest />} />
+            <Route path="cart" element={<Cart />} />
+            <Route path="orders" element={<BuyerOrders />} />
+            <Route path="bulk-request" element={<BuyerBulkRequest />} />
+            <Route path="bulk-requests" element={<BuyerBulkRequests />} />
           </Route>
 
           {/* ==================== PRODUCER PORTAL ==================== */}
@@ -278,20 +237,9 @@ export default function App() {
               element={<Navigate to="/producer/dashboard" replace />}
             />
 
-            <Route
-              path="dashboard"
-              element={<ProducerDashboard />}
-            />
-
-            <Route
-              path="listings"
-              element={<ProducerListings />}
-            />
-
-            <Route
-              path="orders"
-              element={<ProducerOrders />}
-            />
+            <Route path="dashboard" element={<ProducerDashboard />} />
+            <Route path="listings" element={<ProducerListings />} />
+            <Route path="orders" element={<ProducerOrders />} />
 
             <Route
               path="bookings"
@@ -317,40 +265,13 @@ export default function App() {
               }
             />
 
-            <Route
-              path="logistics"
-              element={<ProducerLogistics />}
-            />
-
-            <Route
-              path="analytics"
-              element={<ProducerAnalytics />}
-            />
-
-            <Route
-              path="earnings"
-              element={<ProducerEarnings />}
-            />
-
-            <Route
-              path="messages"
-              element={<ProducerMessages />}
-            />
-
-            <Route
-              path="certificates"
-              element={<ProducerCertificates />}
-            />
-
-            <Route
-              path="verification"
-              element={<ProducerVerification />}
-            />
-
-            <Route
-              path="profile"
-              element={<ProducerProfile />}
-            />
+            <Route path="logistics" element={<ProducerLogistics />} />
+            <Route path="analytics" element={<ProducerAnalytics />} />
+            <Route path="earnings" element={<ProducerEarnings />} />
+            <Route path="messages" element={<ProducerMessages />} />
+            <Route path="certificates" element={<ProducerCertificates />} />
+            <Route path="verification" element={<ProducerVerification />} />
+            <Route path="profile" element={<ProducerProfile />} />
           </Route>
 
           {/* ==================== AGGREGATOR PORTAL ==================== */}
@@ -392,7 +313,6 @@ export default function App() {
               }
             />
 
-            {/* Retained for compatibility with the existing route */}
             <Route
               path="farmer-records"
               element={
@@ -400,7 +320,7 @@ export default function App() {
                   allowedRoles={['aggregator']}
                   requireApproved
                 >
-                  <AggregatorFarmers />
+                  <AggregatorFarmerRecords />
                 </ProtectedRoute>
               }
             />
@@ -428,6 +348,19 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* Buyer orders for approved linked farmers */}
+          {/*  <Route
+              path="requests"
+              element={
+                <ProtectedRoute
+                  allowedRoles={['aggregator']}
+                  requireApproved
+                >
+                  <AggregatorRequests />
+                </ProtectedRoute>
+              }
+            />*/}
 
             <Route
               path="bulk-requests"
@@ -469,50 +402,15 @@ export default function App() {
               element={<Navigate to="/admin/dashboard" replace />}
             />
 
-            <Route
-              path="dashboard"
-              element={<AdminDashboard />}
-            />
-
-            <Route
-              path="role-requests"
-              element={<AdminRoleRequests />}
-            />
-
-            <Route
-              path="approvals"
-              element={<AdminProducerApprovals />}
-            />
-
-            <Route
-              path="users"
-              element={<AdminUserManagement />}
-            />
-
-            <Route
-              path="audits"
-              element={<AdminAudits />}
-            />
-
-            <Route
-              path="logistics"
-              element={<AdminLogisticsHub />}
-            />
-
-            <Route
-              path="pricing"
-              element={<AdminMarketPricing />}
-            />
-
-            <Route
-              path="disputes"
-              element={<AdminDisputes />}
-            />
-
-            <Route
-              path="settings"
-              element={<AdminSettings />}
-            />
+            <Route path="dashboard" element={<AdminDashboard />} />
+            <Route path="role-requests" element={<AdminRoleRequests />} />
+            <Route path="approvals" element={<AdminProducerApprovals />} />
+            <Route path="users" element={<AdminUserManagement />} />
+            <Route path="audits" element={<AdminAudits />} />
+            <Route path="logistics" element={<AdminLogisticsHub />} />
+            <Route path="pricing" element={<AdminMarketPricing />} />
+            <Route path="disputes" element={<AdminDisputes />} />
+            <Route path="settings" element={<AdminSettings />} />
           </Route>
 
           {/* ==================== FALLBACK ==================== */}

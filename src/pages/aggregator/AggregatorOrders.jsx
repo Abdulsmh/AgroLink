@@ -1,5 +1,5 @@
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   RefreshCw,
@@ -19,9 +19,13 @@ import {
   Filter,
   Sprout,
   ShoppingBag,
+  Loader2,
+  ShieldCheck,
+  Info,
+  ChevronRight,
 } from "lucide-react";
 
-import { supabase } from '../../config/supabaseClient';
+import { supabase } from "../../config/supabaseClient";
 import { useAuth } from "../../context/AuthContext";
 
 const ORDER_STATUSES = [
@@ -61,6 +65,20 @@ const STATUS_CONFIG = {
   },
 };
 
+const STATUS_STEPS = [
+  { value: "pending", label: "Order placed", icon: ClipboardList },
+  { value: "confirmed", label: "Confirmed", icon: CheckCircle2 },
+  {
+    value: "processing",
+    label: "Preparing for collection",
+    icon: Truck,
+  },
+  { value: "completed", label: "Completed", icon: Package },
+];
+
+const PROFILE_FIELDS =
+  "id,full_name,phone_number,role,lga_location,verification_status";
+
 const formatCurrency = (amount) =>
   new Intl.NumberFormat("en-NG", {
     style: "currency",
@@ -68,14 +86,14 @@ const formatCurrency = (amount) =>
     maximumFractionDigits: 2,
   }).format(Number(amount) || 0);
 
-const formatDate = (date) => {
-  if (!date) return "Date unavailable";
+const formatDate = (value) => {
+  if (!value) return "Not available";
 
-  const parsedDate = new Date(date);
+  const date = new Date(value);
 
-  if (Number.isNaN(parsedDate.getTime())) return "Date unavailable";
+  if (Number.isNaN(date.getTime())) return "Not available";
 
-  return parsedDate.toLocaleString("en-NG", {
+  return date.toLocaleString("en-NG", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -84,11 +102,31 @@ const formatDate = (date) => {
   });
 };
 
+const formatShortDate = (value) => {
+  if (!value) return "Date unavailable";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+
+  return date.toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+const getOrderReference = (orderId) =>
+  `AG-${String(orderId || "").slice(0, 8).toUpperCase()}`;
+
+const getOrderTitle = (order) =>
+  `${order?.product?.crop_name || "Produce"} order`;
+
 const getStatusConfig = (status) =>
   STATUS_CONFIG[String(status || "").toLowerCase()] || {
     label: status || "Unknown",
-    className: "bg-gray-100 text-gray-700",
-    icon: Package,
+    className: "bg-slate-100 text-slate-700",
+    icon: Info,
   };
 
 function StatusBadge({ status }) {
@@ -99,7 +137,7 @@ function StatusBadge({ status }) {
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${config.className}`}
     >
-      <Icon size={13} />
+      <Icon size={14} />
       {config.label}
     </span>
   );
@@ -107,24 +145,26 @@ function StatusBadge({ status }) {
 
 function SummaryCard({ title, value, description, icon: Icon, color }) {
   const colors = {
-    green: "bg-emerald-50 text-emerald-700",
-    amber: "bg-amber-50 text-amber-700",
-    blue: "bg-blue-50 text-blue-700",
-    purple: "bg-purple-50 text-purple-700",
+    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+    amber: "bg-amber-50 text-amber-700 ring-amber-100",
+    blue: "bg-blue-50 text-blue-700 ring-blue-100",
+    red: "bg-red-50 text-red-700 ring-red-100",
   };
 
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-gray-500">{title}</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900">{value}</p>
-          <p className="mt-1 text-xs text-gray-500">{description}</p>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-slate-500">{title}</p>
+          <p className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
+            {value}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">{description}</p>
         </div>
 
         <div
-          className={`flex h-11 w-11 items-center justify-center rounded-xl ${
-            colors[color] || colors.green
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ${
+            colors[color] || colors.emerald
           }`}
         >
           <Icon size={21} />
@@ -134,78 +174,101 @@ function SummaryCard({ title, value, description, icon: Icon, color }) {
   );
 }
 
-function EmptyState({ hasFilters, onReset }) {
+function EmptyState({
+  title = "No orders found",
+  description = "Orders from your approved linked farmers will appear here.",
+  icon: Icon = Package,
+}) {
   return (
-    <div className="rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-14 text-center">
-      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-        <ClipboardList size={30} />
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
+        <Icon size={30} />
+      </div>
+      <h3 className="mt-5 text-lg font-semibold text-slate-900">{title}</h3>
+      <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+function DetailRow({ icon: Icon, label, children }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+        <Icon size={17} />
       </div>
 
-      <h3 className="mt-5 text-lg font-bold text-gray-900">
-        {hasFilters ? "No matching orders" : "No orders to track yet"}
-      </h3>
-
-      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">
-        {hasFilters
-          ? "Try changing your search phrase or selected status."
-          : "Orders assigned to your approved, linked farmers will appear here when they are visible to your account."}
-      </p>
-
-      {hasFilters && (
-        <button
-          type="button"
-          onClick={onReset}
-          className="mt-5 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
-        >
-          Clear filters
-        </button>
-      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          {label}
+        </p>
+        <div className="mt-1 break-words text-sm font-medium text-slate-800">
+          {children || "Not available"}
+        </div>
+      </div>
     </div>
   );
 }
 
 function OrderDetailsModal({ order, onClose }) {
+  useEffect(() => {
+    if (!order) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [order, onClose]);
+
   if (!order) return null;
 
-  const progressSteps = [
-    { status: "pending", label: "Order placed" },
-    { status: "confirmed", label: "Order confirmed" },
-    { status: "processing", label: "Being prepared" },
-    { status: "completed", label: "Completed" },
-  ];
-
   const currentStatus = String(order.status || "").toLowerCase();
-  const currentIndex = progressSteps.findIndex(
-    (step) => step.status === currentStatus
+  const isCancelled = currentStatus === "cancelled";
+
+  const currentStep = STATUS_STEPS.findIndex(
+    (step) => step.value === currentStatus
   );
 
-  const isCancelled = currentStatus === "cancelled";
+  const product = order.product || {};
+  const buyer = order.buyer || {};
+  const farmer = order.farmer || {};
+
+  const cropName = product.crop_name || "Produce";
+  const unit = product.unit || "unit";
+  const orderReference = getOrderReference(order.id);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
     >
-      <div
+      <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="order-details-title"
-        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl sm:p-7"
-        onClick={(event) => event.stopPropagation()}
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl"
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white/95 px-5 py-4 backdrop-blur sm:px-7">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-widest text-emerald-700">
               Order details
             </p>
+
             <h2
               id="order-details-title"
-              className="mt-1 break-all text-xl font-bold text-gray-900"
+              className="mt-1 text-lg font-bold text-slate-900"
             >
-              #{String(order.id).slice(0, 8).toUpperCase()}
+              {getOrderTitle(order)}
             </h2>
-            <p className="mt-1 text-sm text-gray-500">
-              Created {formatDate(order.created_at)}
+
+            <p className="mt-1 text-xs font-medium text-slate-500">
+              Ref: {orderReference}
             </p>
           </div>
 
@@ -213,367 +276,482 @@ function OrderDetailsModal({ order, onClose }) {
             type="button"
             onClick={onClose}
             aria-label="Close order details"
-            className="rounded-xl p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
+            className="shrink-0 rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
           >
             <X size={21} />
           </button>
         </div>
 
-        <div className="mt-5">
-          <StatusBadge status={order.status} />
-        </div>
-
-        <div className="mt-6 rounded-2xl bg-gray-50 p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-              <Sprout size={24} />
-            </div>
-
-            <div className="min-w-0 flex-1">
-              <p className="font-bold text-gray-900">
-                {order.product?.crop_name || "Produce"}
-              </p>
-              <p className="mt-1 text-sm text-gray-500">
-                {Number(order.quantity || 0).toLocaleString("en-NG")}{" "}
-                {order.product?.unit || "units"}
-              </p>
-              {order.product?.product_type && (
-                <p className="mt-1 text-xs capitalize text-gray-500">
-                  {String(order.product.product_type).replaceAll("_", " ")}
-                </p>
-              )}
-            </div>
-
-            <div className="text-right">
-              <p className="text-xs text-gray-500">Order total</p>
-              <p className="mt-1 font-bold text-emerald-700">
+        <div className="space-y-7 p-5 sm:p-7">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-2xl font-bold text-slate-900">
                 {formatCurrency(order.total_amount)}
               </p>
+              <p className="mt-1 text-sm text-slate-500">
+                {Number(order.quantity) || 0} {unit}
+                {Number(order.quantity) === 1 ? "" : "s"} of {cropName}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Placed {formatDate(order.created_at)}
+              </p>
             </div>
+
+            <StatusBadge status={order.status} />
           </div>
-        </div>
 
-        <div className="mt-6">
-          <h3 className="font-bold text-gray-900">Order progress</h3>
+          <div>
+            <h3 className="mb-4 text-sm font-bold text-slate-900">
+              Order progress
+            </h3>
 
-          {isCancelled ? (
-            <div className="mt-3 flex items-start gap-3 rounded-xl bg-red-50 p-4 text-sm text-red-800">
-              <XCircle size={19} className="mt-0.5 shrink-0" />
-              <div>
-                <p className="font-semibold">This order was cancelled.</p>
-                <p className="mt-1">
-                  Contact the assigned farmer if you need clarification about
-                  the order.
-                </p>
+            {isCancelled ? (
+              <div className="flex gap-3 rounded-xl border border-red-100 bg-red-50 p-4 text-red-800">
+                <XCircle className="mt-0.5 shrink-0" size={20} />
+                <div>
+                  <p className="text-sm font-semibold">Order cancelled</p>
+                  <p className="mt-1 text-sm">
+                    This order is no longer progressing through the normal
+                    collection steps.
+                  </p>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="mt-4 space-y-4">
-              {progressSteps.map((step, index) => {
-                const isReached = currentIndex >= index;
-                const isCurrent = currentIndex === index;
+            ) : (
+              <div className="space-y-4">
+                {STATUS_STEPS.map((step, index) => {
+                  const Icon = step.icon;
+                  const reached =
+                    currentStep >= 0 && index <= currentStep;
+                  const isCurrent = index === currentStep;
 
-                return (
-                  <div key={step.status} className="flex items-start gap-3">
-                    <div
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                        isReached
-                          ? "bg-emerald-600 text-white"
-                          : "bg-gray-100 text-gray-400"
-                      }`}
-                    >
-                      {isReached ? (
-                        <CheckCircle2 size={17} />
-                      ) : (
-                        <span className="text-xs font-bold">{index + 1}</span>
-                      )}
-                    </div>
-
-                    <div className="pt-1">
-                      <p
-                        className={`text-sm font-semibold ${
-                          isReached ? "text-gray-900" : "text-gray-400"
+                  return (
+                    <div key={step.value} className="flex items-start gap-3">
+                      <div
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                          reached
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-slate-100 text-slate-400"
                         }`}
                       >
-                        {step.label}
-                      </p>
-                      {isCurrent && (
-                        <p className="mt-1 text-xs text-emerald-700">
-                          Current order status
+                        <Icon size={17} />
+                      </div>
+
+                      <div className="min-w-0 flex-1 pt-1.5">
+                        <p
+                          className={`text-sm ${
+                            isCurrent
+                              ? "font-bold text-emerald-800"
+                              : reached
+                                ? "font-medium text-slate-800"
+                                : "text-slate-400"
+                          }`}
+                        >
+                          {step.label}
+                          {isCurrent ? " · Current status" : ""}
                         </p>
+                      </div>
+
+                      {isCurrent && (
+                        <span className="mt-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                          Current
+                        </span>
                       )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                  );
+                })}
 
-        <div className="mt-7 grid gap-4 sm:grid-cols-2">
-          <div className="rounded-xl border border-gray-100 p-4">
-            <div className="flex items-center gap-2 text-gray-500">
-              <Sprout size={17} />
-              <p className="text-xs font-medium">Assigned farmer</p>
-            </div>
-            <p className="mt-2 font-semibold text-gray-900">
-              {order.farmer?.full_name ||
-                order.farmer?.farm_name ||
-                "Farmer details unavailable"}
-            </p>
-            {order.farmer?.farm_name && order.farmer?.full_name && (
-              <p className="mt-1 text-sm text-gray-500">
-                {order.farmer.farm_name}
-              </p>
+                <p className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">
+                  This timeline reflects the order's current status. It is not
+                  a historical record of when each step occurred.
+                </p>
+              </div>
             )}
           </div>
 
-          <div className="rounded-xl border border-gray-100 p-4">
-            <div className="flex items-center gap-2 text-gray-500">
-              <UserRound size={17} />
-              <p className="text-xs font-medium">Buyer</p>
-            </div>
-            <p className="mt-2 font-semibold text-gray-900">
-              {order.buyer?.full_name || "Buyer details unavailable"}
-            </p>
-          </div>
+          <div className="grid gap-5 border-t border-slate-100 pt-6 sm:grid-cols-2">
+            <DetailRow icon={Sprout} label="Produce">
+              {cropName}
+            </DetailRow>
 
-          <div className="rounded-xl border border-gray-100 p-4 sm:col-span-2">
-            <div className="flex items-center gap-2 text-gray-500">
-              <MapPin size={17} />
-              <p className="text-xs font-medium">Pickup / delivery location</p>
-            </div>
-            <p className="mt-2 text-sm font-medium text-gray-900">
+            <DetailRow icon={ShoppingBag} label="Product type">
+              {product.product_type || "Not specified"}
+            </DetailRow>
+
+            <DetailRow icon={UserRound} label="Farmer">
+              {farmer.full_name || "Farmer"}
+            </DetailRow>
+
+            <DetailRow icon={UserRound} label="Buyer">
+              {buyer.full_name || "Buyer"}
+            </DetailRow>
+
+            <DetailRow icon={MapPin} label="Pickup / collection location">
               {order.delivery_location ||
-                order.product?.location ||
-                "Location not provided"}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-gray-500">
-              AgroLink currently supports pickup arrangements. Confirm the
-              final pickup details with the relevant parties.
-            </p>
+                product.location ||
+                "Not specified"}
+            </DetailRow>
+
+            <DetailRow icon={CalendarDays} label="Order placed">
+              {formatDate(order.created_at)}
+            </DetailRow>
+
+            <DetailRow icon={Banknote} label="Price per unit">
+              {formatCurrency(
+                product.price_per_unit ??
+                  (Number(order.quantity) > 0
+                    ? Number(order.total_amount) / Number(order.quantity)
+                    : 0)
+              )}
+            </DetailRow>
+
+            <DetailRow icon={Package} label="Quantity">
+              {Number(order.quantity) || 0} {unit}
+            </DetailRow>
           </div>
 
-          <div className="rounded-xl border border-gray-100 p-4 sm:col-span-2">
-            <div className="flex items-center gap-2 text-gray-500">
-              <CalendarDays size={17} />
-              <p className="text-xs font-medium">Last updated</p>
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+            <div className="flex items-start gap-3">
+              <Info className="mt-0.5 shrink-0 text-emerald-700" size={19} />
+              <div>
+                <p className="text-sm font-semibold text-emerald-900">
+                  Aggregator coordination
+                </p>
+                <p className="mt-1 text-sm leading-6 text-emerald-800">
+                  You can monitor orders belonging to your approved linked
+                  farmers. The farmer or authorized administrator remains
+                  responsible for changing the order status.
+                </p>
+              </div>
             </div>
-            <p className="mt-2 text-sm font-medium text-gray-900">
-              {formatDate(order.updated_at || order.created_at)}
-            </p>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="mt-6 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
-        >
-          Close details
-        </button>
-      </div>
+        <div className="border-t border-slate-100 px-5 py-4 text-right sm:px-7">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
+          >
+            Close details
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
 
 export default function AggregatorOrders() {
-  const { user, userProfile, isLoading: authLoading } = useAuth();
+  const {
+    user,
+    userProfile,
+    isLoading: authLoading,
+  } = useAuth();
 
   const [orders, setOrders] = useState([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
-  const loadOrders = useCallback(async () => {
-    if (authLoading) return;
+  const requestIdRef = useRef(0);
+  const refreshInProgressRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
 
-    if (!user?.id) {
-      setOrders([]);
-      setError("Please sign in to view aggregator orders.");
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
+  const isApprovedAggregator =
+    userProfile?.role === "aggregator" &&
+    userProfile?.verification_status === "approved";
 
-    setError("");
-    setLoading(true);
+  const loadOrders = useCallback(
+    async (silent = false) => {
+      if (authLoading) return;
 
-    try {
-      // Get the aggregator's farmer relationships using the existing RPC.
-      const { data: relationships, error: relationshipError } =
-        await supabase.rpc("list_aggregator_farmer_relationships");
-
-      if (relationshipError) throw relationshipError;
-
-      const approvedRelationships = (relationships || []).filter(
-        (relationship) =>
-          String(relationship.status || "").toLowerCase() === "approved"
-      );
-
-      const farmerIds = [
-        ...new Set(
-          approvedRelationships
-            .map((relationship) => relationship.farmer_id)
-            .filter(Boolean)
-        ),
-      ];
-
-      if (farmerIds.length === 0) {
+      if (!user?.id) {
+        requestIdRef.current += 1;
         setOrders([]);
+        setError("Please sign in to view order tracking.");
+        setLoading(false);
+        setRefreshing(false);
         return;
       }
 
-      // Fetch orders assigned to the aggregator's approved linked farmers.
-      const { data: orderRows, error: orderError } = await supabase
-        .from("orders")
-        .select(
-          "id,buyer_id,producer_id,product_id,quantity,total_amount,status,delivery_location,created_at,updated_at"
-        )
-        .in("producer_id", farmerIds)
-        .order("created_at", { ascending: false });
-
-      if (orderError) throw orderError;
-
-      const rows = orderRows || [];
-
-      if (rows.length === 0) {
+      if (!isApprovedAggregator) {
+        requestIdRef.current += 1;
         setOrders([]);
+        setError(
+          "Order tracking is available only to approved aggregator accounts."
+        );
+        setLoading(false);
+        setRefreshing(false);
         return;
       }
 
-      // Fetch related records separately to avoid relying on guessed FK names.
-      const productIds = [
-        ...new Set(rows.map((order) => order.product_id).filter(Boolean)),
-      ];
+      if (refreshInProgressRef.current) {
+        refreshQueuedRef.current = true;
 
-      const buyerIds = [
-        ...new Set(rows.map((order) => order.buyer_id).filter(Boolean)),
-      ];
+        if (!silent) setRefreshing(true);
+        return;
+      }
 
-      const producerIds = [
-        ...new Set(rows.map((order) => order.producer_id).filter(Boolean)),
-      ];
+      refreshInProgressRef.current = true;
+      const requestId = ++requestIdRef.current;
 
-      const [
-        { data: productRows, error: productsError },
-        { data: buyerRows, error: buyersError },
-        { data: producerRows, error: producersError },
-      ] = await Promise.all([
-        productIds.length
-          ? supabase
-              .from("products")
-              .select(
-                "id,crop_name,unit,product_type,location,producer_id,price_per_unit"
+      if (!silent) setLoading(true);
+      setError("");
+
+      try {
+        const {
+          data: relationships,
+          error: relationshipError,
+        } = await supabase.rpc("list_aggregator_farmer_relationships");
+
+        if (relationshipError) throw relationshipError;
+        if (requestId !== requestIdRef.current) return;
+
+        const farmerIds = [
+          ...new Set(
+            (relationships || [])
+              .filter(
+                (relationship) => relationship.status === "approved"
               )
-              .in("id", productIds)
-          : Promise.resolve({ data: [], error: null }),
+              .map((relationship) => relationship.farmer_id)
+              .filter(Boolean)
+          ),
+        ];
 
-        buyerIds.length
-          ? supabase
-              .from("profiles")
-              .select("id,full_name,business_name")
-              .in("id", buyerIds)
-          : Promise.resolve({ data: [], error: null }),
+        if (farmerIds.length === 0) {
+          setOrders([]);
+          return;
+        }
 
-        producerIds.length
-          ? supabase
-              .from("profiles")
-              .select("id,full_name,business_name,farm_name,farm_location")
-              .in("id", producerIds)
-          : Promise.resolve({ data: [], error: null }),
-      ]);
+        const { data: orderRows, error: orderError } = await supabase
+          .from("orders")
+          .select(
+            "id,buyer_id,producer_id,product_id,quantity,total_amount,status,delivery_location,created_at,updated_at"
+          )
+          .in("producer_id", farmerIds)
+          .order("created_at", { ascending: false });
 
-      if (productsError) throw productsError;
-      if (buyersError) throw buyersError;
-      if (producersError) throw producersError;
+        if (orderError) throw orderError;
+        if (requestId !== requestIdRef.current) return;
 
-      const productMap = new Map(
-        (productRows || []).map((product) => [product.id, product])
-      );
+        if (!orderRows?.length) {
+          setOrders([]);
+          return;
+        }
 
-      const buyerMap = new Map(
-        (buyerRows || []).map((buyer) => [buyer.id, buyer])
-      );
+        const productIds = [
+          ...new Set(
+            orderRows.map((order) => order.product_id).filter(Boolean)
+          ),
+        ];
 
-      const producerMap = new Map(
-        (producerRows || []).map((producer) => [producer.id, producer])
-      );
+        const buyerIds = [
+          ...new Set(
+            orderRows.map((order) => order.buyer_id).filter(Boolean)
+          ),
+        ];
 
-      const enrichedOrders = rows.map((order) => ({
-        ...order,
-        product: productMap.get(order.product_id) || null,
-        buyer: buyerMap.get(order.buyer_id) || null,
-        farmer: producerMap.get(order.producer_id) || null,
-      }));
+        const producerIds = [
+          ...new Set(
+            orderRows.map((order) => order.producer_id).filter(Boolean)
+          ),
+        ];
 
-      setOrders(enrichedOrders);
-    } catch (loadError) {
-      console.error("Failed to load aggregator orders:", loadError);
+        const [
+          { data: products, error: productsError },
+          { data: buyers, error: buyersError },
+          { data: producers, error: producersError },
+        ] = await Promise.all([
+          productIds.length
+            ? supabase
+                .from("products")
+                .select(
+                  "id,crop_name,unit,product_type,location,producer_id,price_per_unit"
+                )
+                .in("id", productIds)
+            : Promise.resolve({ data: [], error: null }),
 
-      setOrders([]);
-      setError(
-        loadError?.message ||
-          "Unable to load orders. Check your connection and Supabase access policies."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [user?.id, authLoading]);
+          buyerIds.length
+            ? supabase
+                .from("profiles")
+                .select(PROFILE_FIELDS)
+                .in("id", buyerIds)
+            : Promise.resolve({ data: [], error: null }),
+
+          producerIds.length
+            ? supabase
+                .from("profiles")
+                .select(PROFILE_FIELDS)
+                .in("id", producerIds)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+
+        if (productsError) throw productsError;
+        if (buyersError) throw buyersError;
+        if (producersError) throw producersError;
+        if (requestId !== requestIdRef.current) return;
+
+        const productMap = new Map(
+          (products || []).map((product) => [product.id, product])
+        );
+
+        const buyerMap = new Map(
+          (buyers || []).map((buyer) => [buyer.id, buyer])
+        );
+
+        const producerMap = new Map(
+          (producers || []).map((producer) => [producer.id, producer])
+        );
+
+        const enrichedOrders = orderRows.map((order) => ({
+          ...order,
+          product: productMap.get(order.product_id) || null,
+          buyer: buyerMap.get(order.buyer_id) || null,
+          farmer: producerMap.get(order.producer_id) || null,
+        }));
+
+        setOrders(enrichedOrders);
+      } catch (loadError) {
+        if (requestId !== requestIdRef.current) return;
+
+        console.error("Error loading aggregator orders:", loadError);
+        setOrders([]);
+        setError(
+          loadError?.message ||
+            "Unable to load orders right now. Please try again."
+        );
+      } finally {
+        refreshInProgressRef.current = false;
+
+        if (requestId === requestIdRef.current) {
+          if (!silent) setLoading(false);
+          setRefreshing(false);
+        }
+
+        if (refreshQueuedRef.current) {
+          refreshQueuedRef.current = false;
+          Promise.resolve().then(() => loadOrders(true));
+        }
+      }
+    },
+    [user?.id, authLoading, isApprovedAggregator]
+  );
 
   useEffect(() => {
+    if (authLoading) return undefined;
+
     loadOrders();
-  }, [loadOrders]);
+
+    if (!user?.id || !isApprovedAggregator) {
+      return undefined;
+    }
+
+    let debounceTimer;
+
+    const scheduleRefresh = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadOrders(true);
+      }, 250);
+    };
+
+    const ordersChannel = supabase
+      .channel(`aggregator-orders-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "orders",
+        },
+        scheduleRefresh
+      )
+      .subscribe();
+
+    const relationshipsChannel = supabase
+      .channel(`aggregator-order-relationships-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "aggregator_farmers",
+          filter: `aggregator_id=eq.${user.id}`,
+        },
+        scheduleRefresh
+      )
+      .subscribe();
+
+    const profilesChannel = supabase
+      .channel(`aggregator-order-profiles-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "profiles",
+        },
+        scheduleRefresh
+      )
+      .subscribe();
+
+    return () => {
+      clearTimeout(debounceTimer);
+      supabase.removeChannel(ordersChannel);
+      supabase.removeChannel(relationshipsChannel);
+      supabase.removeChannel(profilesChannel);
+    };
+  }, [authLoading, user?.id, isApprovedAggregator, loadOrders]);
 
   const filteredOrders = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const term = search.trim().toLowerCase();
 
     return orders.filter((order) => {
       const matchesStatus =
-        selectedStatus === "all" ||
-        String(order.status || "").toLowerCase() === selectedStatus;
+        statusFilter === "all" ||
+        String(order.status || "").toLowerCase() === statusFilter;
+
+      if (!matchesStatus) return false;
+      if (!term) return true;
 
       const searchableValues = [
         order.id,
-        order.product?.crop_name,
-        order.buyer?.full_name,
-        order.buyer?.business_name,
-        order.farmer?.full_name,
-        order.farmer?.farm_name,
-        order.delivery_location,
+        getOrderReference(order.id),
+        getOrderTitle(order),
         order.status,
+        order.delivery_location,
+        order.product?.crop_name,
+        order.product?.product_type,
+        order.buyer?.full_name,
+        order.farmer?.full_name,
       ];
 
-      const matchesSearch =
-        !normalizedSearch ||
-        searchableValues.some((value) =>
-          String(value || "").toLowerCase().includes(normalizedSearch)
-        );
-
-      return matchesStatus && matchesSearch;
+      return searchableValues.some((value) =>
+        String(value || "").toLowerCase().includes(term)
+      );
     });
-  }, [orders, searchTerm, selectedStatus]);
+  }, [orders, search, statusFilter]);
 
   const stats = useMemo(() => {
-    const count = (status) =>
-      orders.filter(
-        (order) => String(order.status || "").toLowerCase() === status
-      ).length;
+    const total = orders.length;
 
-    return {
-      total: orders.length,
-      active: orders.filter((order) =>
-        ["pending", "confirmed", "processing"].includes(
-          String(order.status || "").toLowerCase()
-        )
-      ).length,
-      completed: count("completed"),
-      cancelled: count("cancelled"),
-    };
+    const active = orders.filter((order) =>
+      ["pending", "confirmed", "processing"].includes(
+        String(order.status || "").toLowerCase()
+      )
+    ).length;
+
+    const completed = orders.filter(
+      (order) => String(order.status || "").toLowerCase() === "completed"
+    ).length;
+
+    const cancelled = orders.filter(
+      (order) => String(order.status || "").toLowerCase() === "cancelled"
+    ).length;
+
+    return { total, active, completed, cancelled };
   }, [orders]);
 
   const handleRefresh = () => {
@@ -582,47 +760,61 @@ export default function AggregatorOrders() {
   };
 
   const clearFilters = () => {
-    setSearchTerm("");
-    setSelectedStatus("all");
+    setSearch("");
+    setStatusFilter("all");
   };
 
-  if (authLoading) {
+  if (authLoading || loading) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <div className="text-center">
-          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-emerald-100 border-t-emerald-700" />
-          <p className="mt-4 text-sm text-gray-500">
-            Loading your AgroLink session...
-          </p>
+      <div className="min-h-[60vh] bg-slate-50 px-4 py-16">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-8 animate-pulse">
+            <div className="h-4 w-36 rounded bg-slate-200" />
+            <div className="mt-3 h-8 w-64 rounded bg-slate-200" />
+            <div className="mt-3 h-4 w-80 max-w-full rounded bg-slate-200" />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {[1, 2, 3, 4].map((item) => (
+              <div
+                key={item}
+                className="h-32 animate-pulse rounded-2xl bg-white shadow-sm"
+              />
+            ))}
+          </div>
+
+          <div className="mt-8 flex items-center justify-center gap-3 py-10 text-sm text-slate-500">
+            <Loader2 className="animate-spin" size={20} />
+            Loading AgroLink orders...
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50/70 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        {/* Page heading */}
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+    <div className="min-h-screen bg-slate-50 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-7">
+        <header className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
           <div>
-            <div className="flex items-center gap-2 text-sm font-medium text-emerald-700">
-              <ShoppingBag size={17} />
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+              <ShieldCheck size={14} />
               Aggregator workspace
             </div>
 
-            <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
               Order tracking
             </h1>
 
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
-              Monitor orders assigned to your linked farmers, follow their
-              progress, and review pickup arrangements in one place.
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+              Monitor orders placed with your approved linked farmers and help
+              coordinate collection.
             </p>
 
             {userProfile?.full_name && (
-              <p className="mt-2 text-sm text-gray-600">
+              <p className="mt-2 text-sm text-slate-600">
                 Welcome,{" "}
-                <span className="font-semibold text-gray-900">
+                <span className="font-semibold text-slate-800">
                   {userProfile.full_name}
                 </span>
               </p>
@@ -632,323 +824,311 @@ export default function AggregatorOrders() {
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={loading || refreshing}
-            className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:self-center"
           >
             <RefreshCw
               size={16}
               className={refreshing ? "animate-spin" : ""}
             />
-            Refresh orders
+            {refreshing ? "Refreshing..." : "Refresh orders"}
           </button>
-        </div>
+        </header>
 
-        {/* Summary cards */}
-        <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            title="Total orders"
-            value={stats.total}
-            description="Orders from linked farmers"
-            icon={Package}
-            color="green"
-          />
-
-          <SummaryCard
-            title="In progress"
-            value={stats.active}
-            description="Pending, confirmed or processing"
-            icon={Clock3}
-            color="amber"
-          />
-
-          <SummaryCard
-            title="Completed"
-            value={stats.completed}
-            description="Successfully completed orders"
-            icon={CheckCircle2}
-            color="blue"
-          />
-
-          <SummaryCard
-            title="Cancelled"
-            value={stats.cancelled}
-            description="Orders marked as cancelled"
-            icon={XCircle}
-            color="purple"
-          />
-        </div>
-
-        {/* Read-only workflow note */}
-        <div className="mt-6 flex items-start gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
-          <div className="mt-0.5 text-emerald-700">
-            <AlertCircle size={19} />
-          </div>
-
-          <div>
-            <p className="text-sm font-semibold text-emerald-900">
-              Coordination view
-            </p>
-            <p className="mt-1 text-sm leading-6 text-emerald-800">
-              This page is for monitoring and coordination. Order status
-              changes remain with the assigned producer under the current
-              workflow.
-            </p>
-          </div>
-        </div>
-
-        {/* Search and filters */}
-        <div className="mt-7 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-            <div className="relative flex-1">
-              <Search
-                size={19}
-                className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
-              />
-
-              <input
-                type="search"
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Search order ID, crop, farmer, buyer or location..."
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 py-3 pl-11 pr-4 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Filter size={17} className="shrink-0 text-gray-400" />
-
-              <select
-                value={selectedStatus}
-                onChange={(event) => setSelectedStatus(event.target.value)}
-                className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm font-medium text-gray-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 sm:min-w-44"
-                aria-label="Filter orders by status"
-              >
-                {ORDER_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {status === "all"
-                      ? "All statuses"
-                      : status.charAt(0).toUpperCase() + status.slice(1)}
-                  </option>
-                ))}
-              </select>
-
-              {(searchTerm || selectedStatus !== "all") && (
-                <button
-                  type="button"
-                  onClick={clearFilters}
-                  className="rounded-xl p-3 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
-                  aria-label="Clear filters"
-                  title="Clear filters"
-                >
-                  <X size={17} />
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
-            <p className="text-xs text-gray-500">
-              Showing{" "}
-              <span className="font-semibold text-gray-800">
-                {filteredOrders.length}
-              </span>{" "}
-              of {orders.length} orders
-            </p>
-
-            <p className="text-xs text-gray-500">
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />{" "}
-              Linked farmers only
-            </p>
-          </div>
-        </div>
-
-        {/* Error message */}
         {error && (
-          <div className="mt-6 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
-            <AlertCircle size={20} className="mt-0.5 shrink-0 text-red-600" />
-
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800"
+          >
+            <AlertCircle className="mt-0.5 shrink-0" size={20} />
             <div className="min-w-0 flex-1">
-              <p className="font-semibold text-red-800">
-                Could not load orders
+              <p className="font-semibold">
+                Unable to load order information
               </p>
-              <p className="mt-1 break-words text-sm leading-6 text-red-700">
-                {error}
-              </p>
-              <p className="mt-2 text-xs leading-5 text-red-700">
-                If this is a permissions error, check the existing Supabase
-                policies for orders, profiles and products. Do not disable
-                row-level security to resolve it.
-              </p>
+              <p className="mt-1 break-words text-sm leading-6">{error}</p>
             </div>
 
             <button
               type="button"
               onClick={handleRefresh}
-              className="shrink-0 rounded-lg px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+              className="shrink-0 rounded-lg px-2 py-1 text-sm font-semibold hover:bg-red-100"
             >
               Retry
             </button>
           </div>
         )}
 
-        {/* Orders */}
-        <div className="mt-6">
-          {loading ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {[1, 2, 3].map((item) => (
-                <div
-                  key={item}
-                  className="animate-pulse rounded-2xl border border-gray-100 bg-white p-5"
-                >
-                  <div className="h-4 w-1/3 rounded bg-gray-200" />
-                  <div className="mt-5 h-6 w-2/3 rounded bg-gray-200" />
-                  <div className="mt-4 h-4 w-1/2 rounded bg-gray-100" />
-                  <div className="mt-6 h-20 rounded-xl bg-gray-100" />
-                  <div className="mt-5 h-10 rounded-xl bg-gray-100" />
-                </div>
-              ))}
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            title="Total orders"
+            value={stats.total}
+            description="Orders from linked farmers"
+            icon={Package}
+            color="emerald"
+          />
+          <SummaryCard
+            title="Active orders"
+            value={stats.active}
+            description="Awaiting completion"
+            icon={Clock3}
+            color="amber"
+          />
+          <SummaryCard
+            title="Completed"
+            value={stats.completed}
+            description="Successfully completed"
+            icon={CheckCircle2}
+            color="blue"
+          />
+          <SummaryCard
+            title="Cancelled"
+            value={stats.cancelled}
+            description="Cancelled orders"
+            icon={XCircle}
+            color="red"
+          />
+        </section>
+
+        <section className="rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 to-white p-4 sm:p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm">
+              <ShieldCheck size={21} />
             </div>
-          ) : filteredOrders.length === 0 ? (
-            <EmptyState
-              hasFilters={Boolean(searchTerm || selectedStatus !== "all")}
-              onReset={clearFilters}
-            />
+
+            <div>
+              <h2 className="font-semibold text-slate-900">
+                Coordination view
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                This page shows orders belonging to your approved linked
+                farmers. You can monitor progress, buyer details and collection
+                locations, but order status changes remain with the farmer or
+                authorized administrator.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-4 sm:p-5">
+            <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Farmer orders
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {filteredOrders.length}{" "}
+                  {filteredOrders.length === 1 ? "order" : "orders"} shown
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <div className="relative min-w-0 sm:min-w-64">
+                  <Search
+                    size={17}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search crop, buyer, farmer, reference..."
+                    aria-label="Search orders"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100"
+                  />
+                </div>
+
+                <div className="relative">
+                  <Filter
+                    size={16}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <select
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value)}
+                    aria-label="Filter orders by status"
+                    className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-9 text-sm font-medium text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 sm:w-48"
+                  >
+                    {ORDER_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status === "all"
+                          ? "All statuses"
+                          : getStatusConfig(status).label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronRight
+                    size={15}
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-slate-400"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {filteredOrders.length === 0 ? (
+            <div className="p-4 sm:p-6">
+              {orders.length === 0 && !error ? (
+                <EmptyState
+                  title="No farmer orders yet"
+                  description="When buyers place orders with your approved linked farmers, those orders will appear here."
+                />
+              ) : (
+                <EmptyState
+                  title="No matching orders"
+                  description="Try another search term or status filter to find the orders you need."
+                  icon={Search}
+                />
+              )}
+
+              {(search || statusFilter !== "all") && (
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="rounded-lg px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+            </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {filteredOrders.map((order) => (
-                <article
-                  key={order.id}
-                  className="flex flex-col rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-emerald-200 hover:shadow-md"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                        Order reference
-                      </p>
-                      <p className="mt-1 break-all text-sm font-bold text-gray-900">
-                        #{String(order.id).slice(0, 8).toUpperCase()}
-                      </p>
-                    </div>
+            <div className="divide-y divide-slate-100">
+              {filteredOrders.map((order) => {
+                const product = order.product || {};
+                const buyer = order.buyer || {};
+                const farmer = order.farmer || {};
 
-                    <StatusBadge status={order.status} />
-                  </div>
+                return (
+                  <article
+                    key={order.id}
+                    className="p-4 transition hover:bg-slate-50/70 sm:p-5"
+                  >
+                    <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {getOrderTitle(order)}
+                          </span>
 
-                  <div className="mt-5 flex items-center gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-                      <Sprout size={24} />
-                    </div>
+                          <span className="text-xs text-slate-400">
+                            · {formatShortDate(order.created_at)}
+                          </span>
 
-                    <div className="min-w-0">
-                      <h2 className="truncate text-lg font-bold text-gray-900">
-                        {order.product?.crop_name || "Produce"}
-                      </h2>
-                      <p className="mt-1 text-sm text-gray-500">
-                        {Number(order.quantity || 0).toLocaleString("en-NG")}{" "}
-                        {order.product?.unit || "units"}
-                      </p>
-                    </div>
-                  </div>
+                          <StatusBadge status={order.status} />
+                        </div>
 
-                  <div className="mt-5 space-y-3 border-t border-gray-100 pt-4">
-                    <div className="flex items-start gap-2.5">
-                      <Sprout
-                        size={16}
-                        className="mt-0.5 shrink-0 text-gray-400"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-400">Assigned farmer</p>
-                        <p className="mt-0.5 truncate text-sm font-medium text-gray-800">
-                          {order.farmer?.full_name ||
-                            order.farmer?.farm_name ||
-                            "Farmer details unavailable"}
+                        <p className="mt-1 text-xs font-medium text-slate-400">
+                          Ref: {getOrderReference(order.id)}
                         </p>
+
+                        <h3 className="mt-3 text-lg font-bold text-slate-900">
+                          {product.crop_name || "Produce"}
+                        </h3>
+
+                        <p className="mt-1 text-sm text-slate-500">
+                          {Number(order.quantity) || 0}{" "}
+                          {product.unit || "unit"}
+                          {Number(order.quantity) === 1 ? "" : "s"}
+                          {product.product_type
+                            ? ` · ${product.product_type}`
+                            : ""}
+                        </p>
+
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                          <div className="flex min-w-0 items-start gap-2.5">
+                            <UserRound
+                              size={17}
+                              className="mt-0.5 shrink-0 text-slate-400"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs text-slate-400">Buyer</p>
+                              <p className="break-words text-sm font-medium text-slate-700">
+                                {buyer.full_name || "Buyer"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex min-w-0 items-start gap-2.5">
+                            <Sprout
+                              size={17}
+                              className="mt-0.5 shrink-0 text-slate-400"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs text-slate-400">Farmer</p>
+                              <p className="break-words text-sm font-medium text-slate-700">
+                                {farmer.full_name || "Farmer"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex min-w-0 items-start gap-2.5">
+                            <MapPin
+                              size={17}
+                              className="mt-0.5 shrink-0 text-slate-400"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs text-slate-400">
+                                Collection location
+                              </p>
+                              <p className="break-words text-sm font-medium text-slate-700">
+                                {order.delivery_location ||
+                                  product.location ||
+                                  "Not specified"}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center gap-2 text-xs text-slate-400">
+                          <CalendarDays size={14} />
+                          <span>Placed {formatDate(order.created_at)}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-row items-center justify-between gap-4 border-t border-slate-100 pt-4 xl:min-w-48 xl:flex-col xl:items-end xl:border-t-0 xl:pt-0">
+                        <div className="xl:text-right">
+                          <p className="text-xs text-slate-400">
+                            Order total
+                          </p>
+                          <p className="mt-1 text-xl font-bold text-slate-900">
+                            {formatCurrency(order.total_amount)}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOrder(order)}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                        >
+                          <Eye size={16} />
+                          View details
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-start gap-2.5">
-                      <UserRound
-                        size={16}
-                        className="mt-0.5 shrink-0 text-gray-400"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-400">Buyer</p>
-                        <p className="mt-0.5 truncate text-sm font-medium text-gray-800">
-                          {order.buyer?.full_name ||
-                            order.buyer?.business_name ||
-                            "Buyer details unavailable"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2.5">
-                      <MapPin
-                        size={16}
-                        className="mt-0.5 shrink-0 text-gray-400"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-400">
-                          Pickup / delivery location
-                        </p>
-                        <p className="mt-0.5 line-clamp-2 text-sm text-gray-700">
-                          {order.delivery_location ||
-                            order.product?.location ||
-                            "Location not provided"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2.5">
-                      <CalendarDays
-                        size={16}
-                        className="mt-0.5 shrink-0 text-gray-400"
-                      />
-                      <div>
-                        <p className="text-xs text-gray-400">Order date</p>
-                        <p className="mt-0.5 text-sm text-gray-700">
-                          {formatDate(order.created_at)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 flex items-end justify-between gap-3 border-t border-gray-100 pt-4">
-                    <div>
-                      <p className="text-xs text-gray-400">Order total</p>
-                      <p className="mt-1 text-lg font-bold text-emerald-700">
-                        {formatCurrency(order.total_amount)}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setSelectedOrder(order)}
-                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                    >
-                      <Eye size={16} />
-                      Details
-                    </button>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           )}
-        </div>
 
-        <div className="mt-8 flex items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4">
-          <Banknote size={19} className="mt-0.5 shrink-0 text-gray-500" />
-          <p className="text-xs leading-5 text-gray-500">
-            Amounts shown are the order totals stored in AgroLink. This page
-            does not collect payments or confirm that payment has been made.
-          </p>
-        </div>
+          <div className="flex flex-col gap-2 border-t border-slate-100 bg-slate-50/70 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <span>
+              Showing {filteredOrders.length} of {orders.length} orders
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Order list refreshes to reflect new changes
+            </span>
+          </div>
+        </section>
       </div>
 
-      {selectedOrder && (
-        <OrderDetailsModal
-          order={selectedOrder}
-          onClose={() => setSelectedOrder(null)}
-        />
-      )}
+      <OrderDetailsModal
+        order={selectedOrder}
+        onClose={() => setSelectedOrder(null)}
+      />
     </div>
   );
 }

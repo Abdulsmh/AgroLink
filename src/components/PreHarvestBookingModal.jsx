@@ -1,6 +1,16 @@
-import React, { useState } from 'react';
-import { CalendarDays, Loader2, MapPin, X } from 'lucide-react';
-import { toast } from 'react-hot-toast';
+
+import React, { useRef, useState } from 'react';
+import {
+  CalendarDays,
+  Loader2,
+  MapPin,
+  X,
+  Package,
+  ShoppingBasket,
+  ShieldCheck,
+  AlertCircle,
+} from 'lucide-react';
+import toast from 'react-hot-toast';
 import { supabase } from '../config/supabaseClient';
 
 const todayString = () => {
@@ -13,7 +23,45 @@ const todayString = () => {
 };
 
 const formatNaira = (amount) =>
-  `₦${Number(amount || 0).toLocaleString('en-NG')}`;
+  `₦${Number(amount || 0).toLocaleString('en-NG', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
+
+const getErrorMessage = (error) => {
+  const message = String(error?.message || '').toLowerCase();
+
+  if (
+    error?.code === '42501' ||
+    message.includes('row-level security') ||
+    message.includes('permission denied')
+  ) {
+    return 'Your booking could not be submitted because the database rejected the request. Please check your account permissions or contact support.';
+  }
+
+  if (
+    error?.code === '23505' ||
+    message.includes('duplicate key')
+  ) {
+    return 'This booking appears to have already been submitted. Please refresh your bookings before trying again.';
+  }
+
+  if (
+    error?.code === '23503' ||
+    message.includes('foreign key')
+  ) {
+    return 'Some booking information is no longer valid. Please refresh the product page and try again.';
+  }
+
+  if (
+    message.includes('network') ||
+    message.includes('fetch')
+  ) {
+    return 'A network error occurred. Check your internet connection and try again.';
+  }
+
+  return error?.message || 'Unable to submit your booking. Please try again.';
+};
 
 const PreHarvestBookingModal = ({
   product,
@@ -26,154 +74,192 @@ const PreHarvestBookingModal = ({
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  if (!product) return null;
+  // Prevent repeated submissions from rapid clicks.
+  const submittingRef = useRef(false);
 
-  const unit = product.unit || 'unit';
+  const availableQuantity = Number(product?.quantity);
+  const pricePerUnit = Number(product?.price_per_unit);
   const requestedQuantity = Number(quantity);
-  const availableQuantity = Number(product.quantity);
-  const pricePerUnit = Number(product.price_per_unit);
+  const estimatedTotal = requestedQuantity * pricePerUnit;
 
-  const hasValidStock =
-    Number.isFinite(availableQuantity) && availableQuantity > 0;
+  const isValidProduct =
+    Boolean(product?.id) &&
+    product?.product_type === 'pre_harvest' &&
+    Number.isFinite(availableQuantity) &&
+    availableQuantity > 0 &&
+    Number.isFinite(pricePerUnit) &&
+    pricePerUnit >= 0;
 
-  const hasValidPrice =
-    Number.isFinite(pricePerUnit) && pricePerUnit >= 0;
+  const isValidQuantity =
+    quantity.trim() !== '' &&
+    Number.isFinite(requestedQuantity) &&
+    requestedQuantity > 0 &&
+    requestedQuantity <= availableQuantity;
 
-  const hasValidQuantity =
-    Number.isFinite(requestedQuantity) && requestedQuantity > 0;
+  const isValidDate =
+    !collectionDate || collectionDate >= todayString();
 
-  const estimatedTotal =
-    hasValidQuantity && hasValidPrice
-      ? requestedQuantity * pricePerUnit
-      : 0;
+  const isValidNotes = notes.trim().length <= 1000;
+
+  const canSubmit =
+    Boolean(currentUser?.id) &&
+    isValidProduct &&
+    isValidQuantity &&
+    isValidDate &&
+    isValidNotes &&
+    !submitting;
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (submitting) return;
+    if (submittingRef.current) return;
 
     if (!currentUser?.id) {
-      toast.error('Please sign in as a buyer to request a booking.');
+      toast.error('Please sign in to request a pre-harvest booking.');
       return;
     }
 
     if (!product?.id) {
-      toast.error('The selected product could not be identified.');
+      toast.error('The selected product could not be found.');
       return;
     }
 
     if (product.product_type !== 'pre_harvest') {
-      toast.error('Only pre-harvest listings can be booked here.');
+      toast.error('This product is not available for pre-harvest booking.');
       return;
     }
 
-    if (!hasValidStock) {
-      toast.error('This crop is currently unavailable for booking.');
+    if (
+      !Number.isFinite(availableQuantity) ||
+      availableQuantity <= 0
+    ) {
+      toast.error('This product currently has no available quantity.');
       return;
     }
 
-    if (!hasValidQuantity) {
+    if (
+      quantity.trim() === '' ||
+      !Number.isFinite(requestedQuantity) ||
+      requestedQuantity <= 0
+    ) {
       toast.error('Enter a valid quantity greater than zero.');
       return;
     }
 
     if (requestedQuantity > availableQuantity) {
       toast.error(
-        `The requested quantity exceeds the available ${availableQuantity} ${unit}.`
+        `Only ${availableQuantity.toLocaleString('en-NG')} ${product.unit || 'units'} are currently listed.`
       );
       return;
     }
 
-    if (!hasValidPrice) {
-      toast.error('This listing has an invalid price. Please try again later.');
+    if (!Number.isFinite(pricePerUnit) || pricePerUnit < 0) {
+      toast.error('The listed product price is invalid.');
       return;
     }
 
-    if (collectionDate && collectionDate < todayString()) {
-      toast.error('Choose today or a future collection date.');
+    if (!isValidDate) {
+      toast.error('The collection date cannot be in the past.');
       return;
     }
 
-    if (notes.trim().length > 1000) {
-      toast.error('Your notes must not exceed 1,000 characters.');
+    if (!isValidNotes) {
+      toast.error('Notes cannot exceed 1,000 characters.');
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
 
     try {
+      // Verify the active Supabase session.
       const {
-        data: authData,
+        data: { user: authenticatedUser },
         error: authError,
       } = await supabase.auth.getUser();
 
+      if (authError) throw authError;
+
       if (
-        authError ||
-        !authData?.user ||
-        authData.user.id !== currentUser.id
+        !authenticatedUser ||
+        authenticatedUser.id !== currentUser.id
       ) {
-        throw new Error('Your session has expired. Please sign in again.');
+        throw new Error(
+          'Your session has expired or changed. Please sign in again.'
+        );
       }
 
-      const {
-        data: profile,
-        error: profileError,
-      } = await supabase
+      // Confirm that the account has the buyer role.
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('role')
-        .eq('id', currentUser.id)
+        .select('id, role')
+        .eq('id', authenticatedUser.id)
         .maybeSingle();
 
       if (profileError) throw profileError;
 
       if (!profile || profile.role !== 'buyer') {
         throw new Error(
-          'Only buyer accounts can request pre-harvest bookings.'
+          'Only registered buyer accounts can create pre-harvest bookings.'
         );
       }
 
-      // Recheck the listing immediately before submitting the request.
-      // Database constraints and RLS should also enforce booking rules.
-      const {
-        data: latestProduct,
-        error: productError,
-      } = await supabase
+      // Recheck the product against the current database record.
+      // Client-side checks alone cannot guarantee stock availability.
+      const { data: latestProduct, error: productError } = await supabase
         .from('products')
-        .select('id, quantity, product_type')
+        .select('id, quantity, product_type, price_per_unit')
         .eq('id', product.id)
         .maybeSingle();
 
       if (productError) throw productError;
 
-      if (
-        !latestProduct ||
-        latestProduct.product_type !== 'pre_harvest'
-      ) {
+      if (!latestProduct) {
         throw new Error(
-          'This pre-harvest listing is no longer available.'
+          'This product is no longer available. Please refresh the page.'
         );
       }
 
-      const latestAvailableQuantity = Number(latestProduct.quantity);
-
-      if (
-        !Number.isFinite(latestAvailableQuantity) ||
-        latestAvailableQuantity <= 0
-      ) {
-        throw new Error('This crop is currently unavailable for booking.');
-      }
-
-      if (requestedQuantity > latestAvailableQuantity) {
+      if (latestProduct.product_type !== 'pre_harvest') {
         throw new Error(
-          `Only ${latestAvailableQuantity} ${unit} is currently listed. Please adjust your requested quantity.`
+          'This product is no longer available for pre-harvest booking.'
         );
       }
 
+      const latestQuantity = Number(latestProduct.quantity);
+      const latestPrice = Number(latestProduct.price_per_unit);
+
+      if (
+        !Number.isFinite(latestQuantity) ||
+        latestQuantity <= 0
+      ) {
+        throw new Error(
+          'This product currently has no available quantity.'
+        );
+      }
+
+      if (
+        !Number.isFinite(latestPrice) ||
+        latestPrice < 0
+      ) {
+        throw new Error(
+          'The current product price is invalid. Please contact support.'
+        );
+      }
+
+      if (requestedQuantity > latestQuantity) {
+        throw new Error(
+          `Only ${latestQuantity.toLocaleString('en-NG')} ${product.unit || 'units'} are currently available.`
+        );
+      }
+
+      // Submit the booking. The database trigger/function and RLS
+      // policies must validate and populate the remaining booking fields.
       const { error: bookingError } = await supabase
         .from('preharvest_bookings')
         .insert({
-          buyer_id: currentUser.id,
-          product_id: product.id,
+          buyer_id: authenticatedUser.id,
+          product_id: latestProduct.id,
           quantity: requestedQuantity,
           requested_collection_date: collectionDate || null,
           buyer_notes: notes.trim() || null,
@@ -182,34 +268,30 @@ const PreHarvestBookingModal = ({
 
       if (bookingError) throw bookingError;
 
-      toast.success('Your booking request has been submitted.');
+      toast.success(
+        'Pre-harvest booking request submitted successfully.'
+      );
 
+      onSuccess?.();
       onClose?.();
-      await onSuccess?.();
     } catch (error) {
       console.error('Pre-harvest booking submission failed:', error);
-
-      if (error.code === '42501') {
-        toast.error(
-          'You are not permitted to submit this booking. Please check your account and try again.'
-        );
-      } else {
-        toast.error(
-          error.message || 'Unable to submit your booking request.'
-        );
-      }
+      toast.error(getErrorMessage(error));
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
+  if (!product) return null;
+
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-5"
       onMouseDown={(event) => {
         if (
           event.target === event.currentTarget &&
-          !submitting
+          !submittingRef.current
         ) {
           onClose?.();
         }
@@ -218,24 +300,26 @@ const PreHarvestBookingModal = ({
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="booking-modal-title"
-        aria-describedby="booking-modal-description"
-        className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl"
+        aria-labelledby="preharvest-booking-title"
+        className="relative max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-2xl"
       >
-        <div className="flex items-start justify-between border-b border-slate-100 p-5">
+        {/* Header */}
+        <div className="sticky top-0 z-10 flex items-start justify-between border-b border-gray-100 bg-white px-5 py-4 sm:px-6">
           <div>
+            <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-emerald-700">
+              <ShieldCheck size={17} />
+              AgroLink Pre-Harvest
+            </div>
+
             <h2
-              id="booking-modal-title"
-              className="text-xl font-extrabold text-slate-900"
+              id="preharvest-booking-title"
+              className="text-xl font-bold text-gray-900 sm:text-2xl"
             >
-              Request Pre-Harvest Booking
+              Request a Booking
             </h2>
 
-            <p
-              id="booking-modal-description"
-              className="mt-1 text-sm text-slate-500"
-            >
-              Ask the producer to reserve this crop for you.
+            <p className="mt-1 text-sm text-gray-500">
+              Request produce before it is harvested.
             </p>
           </div>
 
@@ -244,172 +328,237 @@ const PreHarvestBookingModal = ({
             onClick={onClose}
             disabled={submitting}
             aria-label="Close booking form"
-            className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
+            className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <X className="h-5 w-5" />
+            <X size={21} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5 p-5">
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="font-bold capitalize text-slate-900">
-                  {product.crop_name}
-                </h3>
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-5 px-5 py-5 sm:px-6">
+            {/* Product summary */}
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm">
+                  <Package size={23} />
+                </div>
 
-                <p className="mt-1 flex items-center gap-1 text-sm text-slate-600">
-                  <MapPin className="h-4 w-4 shrink-0" />
-                  {product.location || 'Location not specified'}
-                </p>
+                <div className="min-w-0 flex-1">
+                  <h3 className="break-words font-bold text-gray-900">
+                    {product.crop_name || 'Selected produce'}
+                  </h3>
+
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
+                    {product.location && (
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin size={14} />
+                        {product.location}
+                      </span>
+                    )}
+
+                    <span>
+                      {Number.isFinite(availableQuantity)
+                        ? availableQuantity.toLocaleString('en-NG')
+                        : '—'}{' '}
+                      {product.unit || 'units'} listed
+                    </span>
+                  </div>
+
+                  <p className="mt-2 text-lg font-bold text-emerald-800">
+                    {formatNaira(pricePerUnit)}
+                    <span className="ml-1 text-xs font-medium text-gray-600">
+                      / {product.unit || 'unit'}
+                    </span>
+                  </p>
+                </div>
               </div>
 
-              <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
-                Pre-harvest
-              </span>
+              {product.description && (
+                <p className="mt-3 border-t border-emerald-100 pt-3 text-sm leading-6 text-gray-600">
+                  {product.description}
+                </p>
+              )}
             </div>
 
-            <p className="mt-3 text-sm font-semibold text-emerald-800">
-              {formatNaira(pricePerUnit)} per {unit}
-            </p>
+            {/* Quantity */}
+            <div>
+              <label
+                htmlFor="booking-quantity"
+                className="mb-2 block text-sm font-semibold text-gray-800"
+              >
+                Quantity required
+              </label>
 
-            <p className="mt-2 text-xs leading-5 text-slate-600">
-              Your request is not confirmed until the producer reviews it.
-              The final quantity, price, and collection arrangements must
-              be agreed upon before fulfilment.
-            </p>
-          </div>
+              <div className="relative">
+                <ShoppingBasket
+                  size={18}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
 
-          <div>
-            <label
-              htmlFor="preharvest-quantity"
-              className="mb-2 block text-sm font-semibold text-slate-700"
-            >
-              Requested quantity ({unit}) *
-            </label>
+                <input
+                  id="booking-quantity"
+                  type="number"
+                  min="0.01"
+                  max={availableQuantity}
+                  step="any"
+                  inputMode="decimal"
+                  required
+                  value={quantity}
+                  onChange={(event) => setQuantity(event.target.value)}
+                  disabled={submitting}
+                  placeholder="Enter quantity"
+                  className="w-full rounded-xl border border-gray-200 py-3 pl-10 pr-16 text-gray-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50"
+                />
 
-            <input
-              id="preharvest-quantity"
-              type="number"
-              min="0.01"
-              step="any"
-              max={hasValidStock ? availableQuantity : undefined}
-              required
-              value={quantity}
-              onChange={(event) => setQuantity(event.target.value)}
-              disabled={submitting || !hasValidStock}
-              aria-describedby="preharvest-quantity-help"
-              className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 disabled:bg-slate-100"
-            />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">
+                  {product.unit || 'units'}
+                </span>
+              </div>
 
-            <p
-              id="preharvest-quantity-help"
-              className="mt-1 text-xs text-slate-500"
-            >
-              {hasValidStock
-                ? `Listed quantity: ${availableQuantity.toLocaleString('en-NG')} ${unit}`
-                : 'This listing currently has no available quantity.'}
-            </p>
-          </div>
+              {quantity !== '' && !isValidQuantity && (
+                <p className="mt-1.5 flex items-center gap-1 text-xs text-red-600">
+                  <AlertCircle size={13} />
+                  Enter a quantity greater than zero and no more than the listed stock.
+                </p>
+              )}
+            </div>
 
-          <div>
-            <label
-              htmlFor="preharvest-date"
-              className="mb-2 block text-sm font-semibold text-slate-700"
-            >
-              Preferred collection date
-            </label>
+            {/* Preferred collection date */}
+            <div>
+              <label
+                htmlFor="booking-date"
+                className="mb-2 block text-sm font-semibold text-gray-800"
+              >
+                Preferred collection date
+                <span className="ml-1 font-normal text-gray-400">
+                  (optional)
+                </span>
+              </label>
 
-            <div className="relative">
-              <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <div className="relative">
+                <CalendarDays
+                  size={18}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
 
-              <input
-                id="preharvest-date"
-                type="date"
-                min={todayString()}
-                value={collectionDate}
-                onChange={(event) =>
-                  setCollectionDate(event.target.value)
-                }
+                <input
+                  id="booking-date"
+                  type="date"
+                  min={todayString()}
+                  value={collectionDate}
+                  onChange={(event) =>
+                    setCollectionDate(event.target.value)
+                  }
+                  disabled={submitting}
+                  className="w-full rounded-xl border border-gray-200 py-3 pl-10 pr-3 text-gray-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50"
+                />
+              </div>
+
+              {!isValidDate && (
+                <p className="mt-1.5 text-xs text-red-600">
+                  Please choose today or a future date.
+                </p>
+              )}
+            </div>
+
+            {/* Notes */}
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label
+                  htmlFor="booking-notes"
+                  className="text-sm font-semibold text-gray-800"
+                >
+                  Additional notes
+                  <span className="ml-1 font-normal text-gray-400">
+                    (optional)
+                  </span>
+                </label>
+
+                <span
+                  className={`text-xs ${
+                    notes.length > 1000
+                      ? 'text-red-600'
+                      : 'text-gray-400'
+                  }`}
+                >
+                  {notes.length}/1000
+                </span>
+              </div>
+
+              <textarea
+                id="booking-notes"
+                rows={3}
+                maxLength={1000}
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
                 disabled={submitting}
-                className="w-full rounded-xl border border-slate-200 py-3 pl-10 pr-4 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 disabled:bg-slate-100"
+                placeholder="Share any collection preferences or details for the producer."
+                className="w-full resize-y rounded-xl border border-gray-200 px-3 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50"
               />
             </div>
 
-            <p className="mt-1 text-xs text-slate-500">
-              The producer must confirm your preferred date.
-            </p>
-          </div>
+            {/* Estimated total */}
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">
+                    Estimated amount
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Based on the currently listed price
+                  </p>
+                </div>
 
-          <div>
-            <label
-              htmlFor="preharvest-notes"
-              className="mb-2 block text-sm font-semibold text-slate-700"
-            >
-              Additional notes (optional)
-            </label>
+                <p className="text-xl font-extrabold text-gray-900">
+                  {isValidQuantity && Number.isFinite(estimatedTotal)
+                    ? formatNaira(estimatedTotal)
+                    : '—'}
+                </p>
+              </div>
 
-            <textarea
-              id="preharvest-notes"
-              rows={3}
-              maxLength={1000}
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              disabled={submitting}
-              placeholder="Add any requirements for the producer..."
-              className="w-full resize-y rounded-xl border border-slate-200 p-3 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 disabled:bg-slate-100"
-            />
-
-            <p className="mt-1 text-right text-xs text-slate-400">
-              {notes.length}/1000
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-slate-50 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-semibold text-slate-600">
-                Estimated amount
-              </span>
-
-              <span className="text-lg font-extrabold text-emerald-700">
-                {formatNaira(estimatedTotal)}
-              </span>
+              <p className="mt-3 border-t border-gray-200 pt-3 text-xs leading-5 text-gray-500">
+                This is an estimate, not a confirmed order total. The
+                producer or an authorized aggregator may need to confirm
+                the available quantity, price, and collection details.
+              </p>
             </div>
 
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              This is an estimate based on the listed price, not a payment
-              request.
-            </p>
+            {/* Booking notice */}
+            <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+              <AlertCircle size={17} className="mt-0.5 shrink-0" />
+              <p className="leading-5">
+                Submitting this request does not guarantee availability.
+                Your booking will remain pending until it is reviewed.
+              </p>
+            </div>
           </div>
 
-          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          {/* Actions */}
+          <div className="flex flex-col-reverse gap-3 border-t border-gray-100 bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
             <button
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              className="rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel
             </button>
 
             <button
               type="submit"
-              disabled={
-                submitting ||
-                !hasValidStock ||
-                !hasValidQuantity ||
-                requestedQuantity > availableQuantity ||
-                !hasValidPrice
-              }
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={!canSubmit}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
             >
               {submitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Submitting...
+                  <Loader2 size={18} className="animate-spin" />
+                  Submitting request...
                 </>
               ) : (
-                'Submit Booking Request'
+                <>
+                  <ShieldCheck size={18} />
+                  Submit Booking Request
+                </>
               )}
             </button>
           </div>

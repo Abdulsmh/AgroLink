@@ -12,6 +12,7 @@ import {
   Package,
   RefreshCw,
   XCircle,
+  AlertCircle,
 } from "lucide-react";
 import { supabase } from "../../config/supabaseClient";
 import { useAuth } from "../../context/AuthContext";
@@ -79,6 +80,28 @@ function formatMoney(value) {
   }).format(amount);
 }
 
+function getFriendlyError(error, fallback) {
+  const message = String(error?.message || "").toLowerCase();
+
+  if (
+    message.includes("network") ||
+    message.includes("fetch") ||
+    message.includes("timeout")
+  ) {
+    return "Connection problem. Please check your internet connection and try again.";
+  }
+
+  if (
+    message.includes("permission denied") ||
+    message.includes("row-level security") ||
+    message.includes("not allowed")
+  ) {
+    return "You do not have permission to complete this action. Please refresh the page or contact support.";
+  }
+
+  return fallback;
+}
+
 export default function BuyerBulkRequests() {
   const { user } = useAuth();
 
@@ -116,7 +139,7 @@ export default function BuyerBulkRequests() {
         const { data: requestRows, error: requestError } = await supabase
           .from("buyer_bulk_requests")
           .select(
-            "id, buyer_id, aggregator_id, status, pickup_location, needed_by, notes, created_at, updated_at"
+            "id, buyer_id, aggregator_id, status, pickup_location, needed_by, notes, rejection_reason, created_at, updated_at"
           )
           .eq("buyer_id", user.id)
           .order("created_at", { ascending: false });
@@ -134,9 +157,7 @@ export default function BuyerBulkRequests() {
 
         const requestIds = rows.map((row) => row.id);
         const aggregatorIds = [
-          ...new Set(
-            rows.map((row) => row.aggregator_id).filter(Boolean)
-          ),
+          ...new Set(rows.map((row) => row.aggregator_id).filter(Boolean)),
         ];
 
         const [itemResult, profileResult] = await Promise.all([
@@ -155,6 +176,14 @@ export default function BuyerBulkRequests() {
                 .in("id", aggregatorIds)
             : Promise.resolve({ data: [], error: null }),
         ]);
+
+        if (itemResult.error) {
+          console.error("Error loading bulk request items:", itemResult.error);
+        }
+
+        if (profileResult.error) {
+          console.error("Error loading aggregator profiles:", profileResult.error);
+        }
 
         const groupedItems = {};
 
@@ -177,7 +206,7 @@ export default function BuyerBulkRequests() {
 
         if (itemResult.error) {
           setError(
-            "Your requests loaded, but some item details could not be loaded."
+            "Your requests loaded, but some produce details are unavailable. Try refreshing."
           );
         } else if (profileResult.error) {
           setError(
@@ -188,7 +217,10 @@ export default function BuyerBulkRequests() {
         console.error("Error loading buyer bulk requests:", loadError);
 
         setError(
-          "We could not load your bulk requests. Please try again."
+          getFriendlyError(
+            loadError,
+            "We could not load your bulk requests. Please try again."
+          )
         );
       } finally {
         setLoading(false);
@@ -201,11 +233,11 @@ export default function BuyerBulkRequests() {
   useEffect(() => {
     let active = true;
 
-    async function initialise() {
+    const initialise = async () => {
       await loadRequests();
-    }
+    };
 
-    if (active) initialise();
+    initialise();
 
     return () => {
       active = false;
@@ -224,6 +256,17 @@ export default function BuyerBulkRequests() {
           schema: "public",
           table: "buyer_bulk_requests",
           filter: `buyer_id=eq.${user.id}`,
+        },
+        () => {
+          loadRequests(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "buyer_bulk_request_items",
         },
         () => {
           loadRequests(true);
@@ -294,8 +337,10 @@ export default function BuyerBulkRequests() {
       console.error("Error cancelling bulk request:", cancelError);
 
       setError(
-        cancelError?.message ||
+        getFriendlyError(
+          cancelError,
           "We could not cancel this request. Please try again."
+        )
       );
 
       await loadRequests(true);
@@ -383,9 +428,10 @@ export default function BuyerBulkRequests() {
         {error && (
           <div
             role="alert"
-            className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+            className="mb-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
           >
-            {error}
+            <AlertCircle size={18} className="mt-0.5 shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 
@@ -412,9 +458,7 @@ export default function BuyerBulkRequests() {
               className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
             >
               <p className="text-xs font-medium text-gray-500">{label}</p>
-              <p className="mt-2 text-2xl font-bold text-gray-900">
-                {value}
-              </p>
+              <p className="mt-2 text-2xl font-bold text-gray-900">{value}</p>
             </div>
           ))}
         </div>
@@ -525,7 +569,6 @@ export default function BuyerBulkRequests() {
                           className="mt-0.5 shrink-0 text-emerald-700"
                           size={18}
                         />
-
                         <div>
                           <p className="text-xs text-gray-500">
                             Preferred pickup
@@ -541,7 +584,6 @@ export default function BuyerBulkRequests() {
                           className="mt-0.5 shrink-0 text-emerald-700"
                           size={18}
                         />
-
                         <div>
                           <p className="text-xs text-gray-500">Required by</p>
                           <p className="mt-1 text-sm font-medium text-gray-800">
@@ -550,6 +592,19 @@ export default function BuyerBulkRequests() {
                         </div>
                       </div>
                     </div>
+
+                    {status === "rejected" && (
+                      <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+                        <p className="flex items-center gap-2 text-sm font-semibold text-red-800">
+                          <AlertCircle size={17} />
+                          Reason for rejection
+                        </p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-red-700">
+                          {request.rejection_reason?.trim() ||
+                            "The aggregator has not provided a reason."}
+                        </p>
+                      </div>
+                    )}
 
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                       <p className="text-sm text-gray-600">
@@ -575,7 +630,6 @@ export default function BuyerBulkRequests() {
                             ) : (
                               <XCircle size={16} />
                             )}
-
                             {cancellingId === request.id
                               ? "Cancelling..."
                               : "Cancel request"}
@@ -594,7 +648,6 @@ export default function BuyerBulkRequests() {
                           className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                         >
                           {isExpanded ? "Hide details" : "View details"}
-
                           {isExpanded ? (
                             <ChevronUp size={16} />
                           ) : (
@@ -631,7 +684,6 @@ export default function BuyerBulkRequests() {
                                       <p className="font-semibold text-gray-900">
                                         {item.crop_name}
                                       </p>
-
                                       <p className="mt-1 text-sm text-gray-600">
                                         Quantity: {item.quantity} {item.unit}
                                       </p>
@@ -660,7 +712,6 @@ export default function BuyerBulkRequests() {
                             <p className="text-sm font-semibold text-gray-800">
                               Additional instructions
                             </p>
-
                             <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-600">
                               {request.notes}
                             </p>

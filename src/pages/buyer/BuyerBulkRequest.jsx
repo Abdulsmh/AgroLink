@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -13,11 +13,17 @@ import {
   ShoppingBasket,
   Trash2,
   AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { supabase } from '../../config/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 
 const MAX_ITEMS = 20;
+const MAX_CROP_LENGTH = 120;
+const MAX_UNIT_LENGTH = 30;
+const MAX_ITEM_NOTES_LENGTH = 1000;
+const MAX_PICKUP_LENGTH = 250;
+const MAX_REQUEST_NOTES_LENGTH = 2000;
 
 const emptyItem = () => ({
   crop_name: '',
@@ -41,6 +47,55 @@ function getLocalDateString() {
   return `${year}-${month}-${day}`;
 }
 
+function getFriendlyError(error, fallback) {
+  const message = String(error?.message || '').toLowerCase();
+
+  if (
+    message.includes('approved aggregator') ||
+    message.includes('aggregator') && message.includes('valid')
+  ) {
+    return 'The selected aggregator is no longer available or approved. Please select another aggregator.';
+  }
+
+  if (
+    message.includes('only buyer accounts') ||
+    message.includes('must be logged in') ||
+    message.includes('not authenticated') ||
+    message.includes('jwt')
+  ) {
+    return 'Your session may have expired. Please sign in again and retry.';
+  }
+
+  if (
+    message.includes('pickup location') ||
+    message.includes('required-by date') ||
+    message.includes('required date')
+  ) {
+    return 'Please check your pickup location and required-by date.';
+  }
+
+  if (
+    message.includes('item') ||
+    message.includes('quantity') ||
+    message.includes('crop name') ||
+    message.includes('target price') ||
+    message.includes('produce')
+  ) {
+    return 'Please review your produce items. Each item needs a crop name, a valid positive quantity, and a unit. Target prices cannot be negative.';
+  }
+
+  if (
+    message.includes('permission denied') ||
+    message.includes('not authorized') ||
+    message.includes('row-level security') ||
+    message.includes('rls')
+  ) {
+    return 'Your account could not complete this action. Please confirm that you are signed in with a buyer account.';
+  }
+
+  return fallback;
+}
+
 export default function BuyerBulkRequest() {
   const { user } = useAuth();
 
@@ -52,17 +107,58 @@ export default function BuyerBulkRequest() {
   const [notes, setNotes] = useState('');
 
   const [loadingAggregators, setLoadingAggregators] = useState(true);
+  const [aggregatorLoadError, setAggregatorLoadError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [requestReference, setRequestReference] = useState('');
 
+  const loadAggregators = useCallback(async () => {
+    setLoadingAggregators(true);
+    setAggregatorLoadError('');
+    setError('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc(
+        'list_approved_aggregators'
+      );
+
+      if (rpcError) throw rpcError;
+
+      const availableAggregators = Array.isArray(data)
+        ? data.filter(
+            (aggregator) =>
+              aggregator?.id &&
+              typeof aggregator.id === 'string'
+          )
+        : [];
+
+      setAggregators(availableAggregators);
+
+      setAggregatorId((currentId) =>
+        availableAggregators.some(
+          (aggregator) => aggregator.id === currentId
+        )
+          ? currentId
+          : ''
+      );
+    } catch (loadError) {
+      console.error('Load approved aggregators error:', loadError);
+      setAggregators([]);
+      setAggregatorLoadError(
+        'We could not load approved aggregators. Check your connection and try again.'
+      );
+    } finally {
+      setLoadingAggregators(false);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
 
-    async function loadAggregators() {
+    async function loadInitialAggregators() {
       setLoadingAggregators(true);
-      setError('');
+      setAggregatorLoadError('');
 
       try {
         const { data, error: rpcError } = await supabase.rpc(
@@ -71,15 +167,24 @@ export default function BuyerBulkRequest() {
 
         if (rpcError) throw rpcError;
 
+        const availableAggregators = Array.isArray(data)
+          ? data.filter(
+              (aggregator) =>
+                aggregator?.id &&
+                typeof aggregator.id === 'string'
+            )
+          : [];
+
         if (active) {
-          setAggregators(data || []);
+          setAggregators(availableAggregators);
         }
       } catch (loadError) {
         console.error('Load approved aggregators error:', loadError);
 
         if (active) {
-          setError(
-            'We could not load approved aggregators. Please refresh the page or contact support.'
+          setAggregators([]);
+          setAggregatorLoadError(
+            'We could not load approved aggregators. Check your connection and try again.'
           );
         }
       } finally {
@@ -87,7 +192,7 @@ export default function BuyerBulkRequest() {
       }
     }
 
-    loadAggregators();
+    loadInitialAggregators();
 
     return () => {
       active = false;
@@ -100,11 +205,14 @@ export default function BuyerBulkRequest() {
         itemIndex === index ? { ...item, [field]: value } : item
       )
     );
+
+    setError('');
   }
 
   function addItem() {
     setError('');
     setSuccess('');
+    setRequestReference('');
 
     setItems((current) => {
       if (current.length >= MAX_ITEMS) return current;
@@ -115,6 +223,7 @@ export default function BuyerBulkRequest() {
   function removeItem(index) {
     setError('');
     setSuccess('');
+    setRequestReference('');
 
     setItems((current) =>
       current.length <= 1
@@ -131,39 +240,99 @@ export default function BuyerBulkRequest() {
     setNotes('');
   }
 
+  function validateForm() {
+    if (!user?.id) {
+      return 'Please sign in to submit a bulk request.';
+    }
+
+    if (loadingAggregators) {
+      return 'Please wait while we load the approved aggregators.';
+    }
+
+    if (aggregatorLoadError) {
+      return 'Please reload the approved aggregator list before submitting.';
+    }
+
+    if (!aggregatorId) {
+      return 'Please select an approved aggregator.';
+    }
+
+    if (!aggregators.some((aggregator) => aggregator.id === aggregatorId)) {
+      return 'The selected aggregator is no longer available. Please reload the list and select another.';
+    }
+
+    if (!pickupLocation.trim()) {
+      return 'Enter your preferred pickup location.';
+    }
+
+    if (pickupLocation.trim().length > MAX_PICKUP_LENGTH) {
+      return `The pickup location must not exceed ${MAX_PICKUP_LENGTH} characters.`;
+    }
+
+    if (notes.trim().length > MAX_REQUEST_NOTES_LENGTH) {
+      return `Additional notes must not exceed ${MAX_REQUEST_NOTES_LENGTH} characters.`;
+    }
+
+    if (items.length < 1 || items.length > MAX_ITEMS) {
+      return `Your request must contain between 1 and ${MAX_ITEMS} items.`;
+    }
+
+    if (neededBy && neededBy < getLocalDateString()) {
+      return 'The required-by date cannot be in the past.';
+    }
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const cropName = item.crop_name.trim();
+      const unit = item.unit.trim();
+      const quantityText = String(item.quantity).trim();
+      const priceText = String(item.target_price_per_unit).trim();
+
+      if (!cropName || cropName.length > MAX_CROP_LENGTH) {
+        return `Item ${index + 1}: enter a crop name of no more than ${MAX_CROP_LENGTH} characters.`;
+      }
+
+      if (!unit || unit.length > MAX_UNIT_LENGTH) {
+        return `Item ${index + 1}: select a valid unit of no more than ${MAX_UNIT_LENGTH} characters.`;
+      }
+
+      if (
+        !quantityText ||
+        !Number.isFinite(Number(quantityText)) ||
+        Number(quantityText) <= 0
+      ) {
+        return `Item ${index + 1}: quantity must be a valid number greater than zero.`;
+      }
+
+      if (
+        priceText !== '' &&
+        (!Number.isFinite(Number(priceText)) ||
+          Number(priceText) < 0)
+      ) {
+        return `Item ${index + 1}: target price must be zero or greater.`;
+      }
+
+      if (item.notes.trim().length > MAX_ITEM_NOTES_LENGTH) {
+        return `Item ${index + 1}: item-specific notes must not exceed ${MAX_ITEM_NOTES_LENGTH} characters.`;
+      }
+    }
+
+    return '';
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
+
+    if (submitting) return;
+
     setError('');
     setSuccess('');
     setRequestReference('');
 
-    if (!user?.id) {
-      setError('Please sign in to submit a bulk request.');
-      return;
-    }
+    const validationError = validateForm();
 
-    if (loadingAggregators) {
-      setError('Please wait while we load the approved aggregators.');
-      return;
-    }
-
-    if (!aggregatorId) {
-      setError('Please select an approved aggregator.');
-      return;
-    }
-
-    if (!aggregators.some((aggregator) => aggregator.id === aggregatorId)) {
-      setError('The selected aggregator is no longer available. Refresh and select another.');
-      return;
-    }
-
-    if (!pickupLocation.trim()) {
-      setError('Enter your preferred pickup location.');
-      return;
-    }
-
-    if (items.length < 1 || items.length > MAX_ITEMS) {
-      setError(`Your request must contain between 1 and ${MAX_ITEMS} items.`);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -172,48 +341,11 @@ export default function BuyerBulkRequest() {
       quantity: Number(item.quantity),
       unit: item.unit.trim(),
       target_price_per_unit:
-        item.target_price_per_unit.trim() === ''
+        String(item.target_price_per_unit).trim() === ''
           ? null
           : Number(item.target_price_per_unit),
       notes: item.notes.trim() || null,
     }));
-
-    const invalidItemIndex = cleanedItems.findIndex((item) => {
-      return (
-        !item.crop_name ||
-        item.crop_name.length > 120 ||
-        !item.unit ||
-        item.unit.length > 30 ||
-        !Number.isFinite(item.quantity) ||
-        item.quantity <= 0 ||
-        (item.target_price_per_unit !== null &&
-          (!Number.isFinite(item.target_price_per_unit) ||
-            item.target_price_per_unit < 0)) ||
-        (item.notes && item.notes.length > 1000)
-      );
-    });
-
-    if (invalidItemIndex !== -1) {
-      setError(
-        `Please check Item ${invalidItemIndex + 1}. Enter a valid crop name, positive quantity, unit, and optional non-negative target price.`
-      );
-      return;
-    }
-
-    if (neededBy && neededBy < getLocalDateString()) {
-      setError('The required-by date cannot be in the past.');
-      return;
-    }
-
-    if (pickupLocation.trim().length > 250) {
-      setError('The pickup location must not exceed 250 characters.');
-      return;
-    }
-
-    if (notes.trim().length > 2000) {
-      setError('Additional notes must not exceed 2,000 characters.');
-      return;
-    }
 
     setSubmitting(true);
 
@@ -231,20 +363,29 @@ export default function BuyerBulkRequest() {
 
       if (submitError) throw submitError;
 
-      // The RPC is expected to return the created request UUID.
       const reference =
         typeof data === 'string'
           ? data
           : data?.id || data?.request_id || '';
+
+      if (!reference) {
+        console.error(
+          'Bulk request RPC returned no recognizable request reference:',
+          data
+        );
+      }
 
       setRequestReference(reference);
       setSuccess('Your bulk request was submitted successfully.');
       resetForm();
     } catch (submitError) {
       console.error('Submit buyer bulk request error:', submitError);
+
       setError(
-        submitError.message ||
-          'Your request could not be submitted. Please try again.'
+        getFriendlyError(
+          submitError,
+          'Your request could not be submitted. Please check your connection and try again.'
+        )
       );
     } finally {
       setSubmitting(false);
@@ -363,12 +504,35 @@ export default function BuyerBulkRequest() {
               ))}
             </select>
 
-            {!loadingAggregators && aggregators.length === 0 && (
-              <p className="mt-3 text-sm text-amber-700">
-                No approved aggregators are currently available. Please check
-                again later.
-              </p>
+            {aggregatorLoadError && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <p className="text-sm text-amber-800">
+                  {aggregatorLoadError}
+                </p>
+
+                <button
+                  type="button"
+                  onClick={loadAggregators}
+                  disabled={loadingAggregators || submitting}
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  <RefreshCw
+                    size={15}
+                    className={loadingAggregators ? 'animate-spin' : ''}
+                  />
+                  Try again
+                </button>
+              </div>
             )}
+
+            {!loadingAggregators &&
+              !aggregatorLoadError &&
+              aggregators.length === 0 && (
+                <p className="mt-3 text-sm text-amber-700">
+                  No approved aggregators are currently available. Please
+                  check again later.
+                </p>
+              )}
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:p-7">
@@ -433,7 +597,7 @@ export default function BuyerBulkRequest() {
                         id={`crop-${index}`}
                         className={inputClass}
                         value={item.crop_name}
-                        maxLength={120}
+                        maxLength={MAX_CROP_LENGTH}
                         onChange={(event) =>
                           updateItem(index, 'crop_name', event.target.value)
                         }
@@ -524,7 +688,7 @@ export default function BuyerBulkRequest() {
                       <textarea
                         id={`item-notes-${index}`}
                         rows={2}
-                        maxLength={1000}
+                        maxLength={MAX_ITEM_NOTES_LENGTH}
                         className={inputClass}
                         value={item.notes}
                         onChange={(event) =>
@@ -561,8 +725,10 @@ export default function BuyerBulkRequest() {
                     id="pickup"
                     className={`${inputClass} pl-10`}
                     value={pickupLocation}
-                    onChange={(event) => setPickupLocation(event.target.value)}
-                    maxLength={250}
+                    onChange={(event) =>
+                      setPickupLocation(event.target.value)
+                    }
+                    maxLength={MAX_PICKUP_LENGTH}
                     placeholder="Enter town, market, or pickup point"
                     required
                     disabled={submitting}
@@ -597,7 +763,7 @@ export default function BuyerBulkRequest() {
                 <textarea
                   id="request-notes"
                   rows={3}
-                  maxLength={2000}
+                  maxLength={MAX_REQUEST_NOTES_LENGTH}
                   className={inputClass}
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
@@ -621,6 +787,7 @@ export default function BuyerBulkRequest() {
               disabled={
                 submitting ||
                 loadingAggregators ||
+                Boolean(aggregatorLoadError) ||
                 aggregators.length === 0
               }
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-6 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"

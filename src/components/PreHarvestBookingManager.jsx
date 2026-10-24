@@ -1,11 +1,23 @@
-import React, { useCallback, useEffect, useState } from 'react';
+
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   AlertCircle,
+  CalendarDays,
   CheckCircle2,
+  Clock,
   Loader2,
   MapPin,
+  MessageSquare,
+  Package,
   RefreshCw,
   Sprout,
+  UserRound,
+  X,
   XCircle,
 } from 'lucide-react';
 import { supabase } from '../config/supabaseClient';
@@ -22,46 +34,209 @@ const STATUS_LABELS = {
   cancelled: 'Cancelled',
 };
 
-const money = (value) =>
+const STATUS_STYLES = {
+  pending: 'bg-amber-50 text-amber-700 ring-amber-200',
+  accepted: 'bg-blue-50 text-blue-700 ring-blue-200',
+  payment_pending: 'bg-orange-50 text-orange-700 ring-orange-200',
+  payment_confirmed: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  harvest_ready: 'bg-teal-50 text-teal-700 ring-teal-200',
+  completed: 'bg-green-50 text-green-700 ring-green-200',
+  rejected: 'bg-red-50 text-red-700 ring-red-200',
+  cancelled: 'bg-slate-100 text-slate-600 ring-slate-200',
+};
+
+const FILTERS = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'all', label: 'All Bookings' },
+];
+
+const ACTIVE_STATUSES = [
+  'accepted',
+  'payment_pending',
+  'payment_confirmed',
+  'harvest_ready',
+];
+
+const TERMINAL_STATUSES = ['completed', 'rejected', 'cancelled'];
+
+const EMPTY_FORM = {
+  decision: 'accepted',
+  quantity: '',
+  price: '',
+  collectionLocation: '',
+  message: '',
+};
+
+const formatCurrency = (amount) =>
   new Intl.NumberFormat('en-NG', {
     style: 'currency',
     currency: 'NGN',
     maximumFractionDigits: 2,
-  }).format(Number(value || 0));
+  }).format(Number(amount) || 0);
 
-const dateLabel = (value) => {
+const formatDate = (value) => {
   if (!value) return 'Not specified';
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return String(value);
+  if (Number.isNaN(date.getTime())) return 'Not specified';
 
-  return date.toLocaleDateString('en-NG', {
+  return new Intl.DateTimeFormat('en-NG', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
-  });
+  }).format(date);
 };
+
+const formatDateTime = (value) => {
+  if (!value) return 'Not specified';
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return 'Not specified';
+
+  return new Intl.DateTimeFormat('en-NG', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+};
+
+const getErrorMessage = (error) => {
+  if (!error) return 'Something went wrong. Please try again.';
+
+  if (typeof error === 'string') return error;
+
+  return (
+    error.message ||
+    error.details ||
+    error.hint ||
+    'Something went wrong. Please try again.'
+  );
+};
+
+const getProfileName = (profile) =>
+  profile?.full_name?.trim() || 'Name unavailable';
+
+const getBookingFilterStatus = (booking, filter) => {
+  if (filter === 'all') return true;
+  if (filter === 'pending') return booking.status === 'pending';
+  if (filter === 'active') return ACTIVE_STATUSES.includes(booking.status);
+  if (filter === 'completed') return booking.status === 'completed';
+  if (filter === 'rejected') return booking.status === 'rejected';
+  if (filter === 'cancelled') return booking.status === 'cancelled';
+
+  return false;
+};
+
+function StatusBadge({ status }) {
+  const style =
+    STATUS_STYLES[status] ||
+    'bg-slate-100 text-slate-600 ring-slate-200';
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${style}`}
+    >
+      {STATUS_LABELS[status] || status || 'Unknown'}
+    </span>
+  );
+}
+
+function DetailRow({ icon: Icon, label, value }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="mt-0.5 rounded-lg bg-slate-100 p-2 text-slate-600">
+        <Icon size={16} />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-slate-500">{label}</p>
+        <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+          {value || 'Not specified'}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FormField({ label, children, hint }) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-sm font-medium text-slate-700">
+        {label}
+      </label>
+      {children}
+      {hint && (
+        <p className="mt-1 text-xs text-slate-500">{hint}</p>
+      )}
+    </div>
+  );
+}
 
 export default function PreHarvestBookingManager({ role }) {
   const isAggregator = role === 'aggregator';
+  const isProducer = role === 'producer';
+  const hasValidRole = isAggregator || isProducer;
 
   const [bookings, setBookings] = useState([]);
+  const [forms, setForms] = useState({});
+  const [filter, setFilter] = useState('pending');
+  const [expandedId, setExpandedId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submittingId, setSubmittingId] = useState(null);
-  const [filter, setFilter] = useState('pending');
-  const [forms, setForms] = useState({});
-  const [expandedId, setExpandedId] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  const mountedRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const submittingRef = useRef(false);
+  const confirmationRef = useRef(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      requestIdRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    confirmationRef.current = confirmation;
+  }, [confirmation]);
 
   const loadBookings = useCallback(
-    async (refresh = false) => {
-      if (refresh) {
+    async ({ quiet = false } = {}) => {
+      if (!hasValidRole) {
+        setBookings([]);
+        setForms({});
+        setLoading(false);
+        setRefreshing(false);
+        setLoadError(
+          'This page is only available to producers and aggregators.'
+        );
+        return;
+      }
+
+      const requestId = ++requestIdRef.current;
+
+      if (quiet) {
         setRefreshing(true);
       } else {
         setLoading(true);
       }
+
+      setLoadError('');
 
       try {
         const {
@@ -72,130 +247,214 @@ export default function PreHarvestBookingManager({ role }) {
         if (authError) throw authError;
 
         if (!user) {
-          setBookings([]);
-          setForms({});
+          if (mountedRef.current && requestId === requestIdRef.current) {
+            setCurrentUserId(null);
+            setBookings([]);
+            setForms({});
+            setExpandedId(null);
+            setLoadError('Your session has expired. Please sign in again.');
+          }
+
           return;
         }
 
-        let request = supabase
+        if (
+          mountedRef.current &&
+          requestId === requestIdRef.current
+        ) {
+          setCurrentUserId(user.id);
+          setSessionChecked(true);
+        }
+
+        let query = supabase
           .from('preharvest_bookings')
           .select('*')
           .order('created_at', { ascending: false });
 
-        request = isAggregator
-          ? request.eq('aggregator_id', user.id)
-          : request.eq('producer_id', user.id);
+        query = isAggregator
+          ? query.eq('aggregator_id', user.id)
+          : query.eq('producer_id', user.id);
 
-        const { data, error } = await request;
+        const { data: rows, error: bookingError } = await query;
 
-        if (error) throw error;
+        if (bookingError) throw bookingError;
 
-        const rows = data || [];
+        const safeRows = rows || [];
 
-        if (rows.length === 0) {
-          setBookings([]);
-          setForms({});
-          setExpandedId(null);
+        if (safeRows.length === 0) {
+          if (
+            mountedRef.current &&
+            requestId === requestIdRef.current
+          ) {
+            setBookings([]);
+            setForms({});
+            setExpandedId(null);
+          }
+
           return;
         }
 
         const productIds = [
-          ...new Set(rows.map((b) => b.product_id).filter(Boolean)),
+          ...new Set(
+            safeRows
+              .map((booking) => booking.product_id)
+              .filter(Boolean)
+          ),
         ];
 
         const buyerIds = [
-          ...new Set(rows.map((b) => b.buyer_id).filter(Boolean)),
+          ...new Set(
+            safeRows
+              .map((booking) => booking.buyer_id)
+              .filter(Boolean)
+          ),
         ];
 
         const producerIds = [
-          ...new Set(rows.map((b) => b.producer_id).filter(Boolean)),
+          ...new Set(
+            safeRows
+              .map((booking) => booking.producer_id)
+              .filter(Boolean)
+          ),
         ];
 
-        const [productResult, buyerResult, producerResult] =
-          await Promise.all([
-            productIds.length
-              ? supabase
-                  .from('products')
-                  .select('id, crop_name, location, unit, description')
-                  .in('id', productIds)
-              : Promise.resolve({ data: [], error: null }),
+        const [
+          productsResult,
+          buyersResult,
+          producersResult,
+        ] = await Promise.all([
+          productIds.length
+            ? supabase
+                .from('products')
+                .select('id, crop_name, location, unit, description')
+                .in('id', productIds)
+            : Promise.resolve({ data: [], error: null }),
 
-            buyerIds.length
-              ? supabase
-                  .from('profiles')
-                  .select('id, full_name, phone_number, lga_location')
-                  .in('id', buyerIds)
-              : Promise.resolve({ data: [], error: null }),
+          buyerIds.length
+            ? supabase
+                .from('profiles')
+                .select('id, full_name, phone_number, lga_location')
+                .in('id', buyerIds)
+            : Promise.resolve({ data: [], error: null }),
 
-            producerIds.length
-              ? supabase
-                  .from('profiles')
-                  .select('id, full_name, lga_location')
-                  .in('id', producerIds)
-              : Promise.resolve({ data: [], error: null }),
-          ]);
+          producerIds.length
+            ? supabase
+                .from('profiles')
+                .select('id, full_name, lga_location')
+                .in('id', producerIds)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
 
-        if (productResult.error) throw productResult.error;
-        if (buyerResult.error) throw buyerResult.error;
-        if (producerResult.error) throw producerResult.error;
+        if (productsResult.error) throw productsResult.error;
+        if (buyersResult.error) throw buyersResult.error;
+        if (producersResult.error) throw producersResult.error;
 
-        const products = new Map(
-          (productResult.data || []).map((item) => [item.id, item])
+        const productMap = new Map(
+          (productsResult.data || []).map((item) => [item.id, item])
         );
 
-        const buyers = new Map(
-          (buyerResult.data || []).map((item) => [item.id, item])
+        const buyerMap = new Map(
+          (buyersResult.data || []).map((item) => [item.id, item])
         );
 
-        const producers = new Map(
-          (producerResult.data || []).map((item) => [item.id, item])
+        const producerMap = new Map(
+          (producersResult.data || []).map((item) => [item.id, item])
         );
 
-        const enrichedBookings = rows.map((booking) => ({
+        const enrichedBookings = safeRows.map((booking) => ({
           ...booking,
-          product: products.get(booking.product_id) || null,
-          buyer: buyers.get(booking.buyer_id) || null,
-          producer: producers.get(booking.producer_id) || null,
+          product: productMap.get(booking.product_id) || null,
+          buyer: buyerMap.get(booking.buyer_id) || null,
+          producer: producerMap.get(booking.producer_id) || null,
         }));
+
+        if (
+          !mountedRef.current ||
+          requestId !== requestIdRef.current
+        ) {
+          return;
+        }
 
         setBookings(enrichedBookings);
 
-        // Initialize forms after attaching product information.
-        // Preserve any form values already entered by the user.
-        setForms((previous) => {
-          const next = {};
+        setForms((previousForms) => {
+          const nextForms = {};
 
           enrichedBookings.forEach((booking) => {
-            next[booking.id] = previous[booking.id] || {
-              decision: 'accepted',
-              quantity: String(booking.quantity ?? ''),
-              price: String(booking.requested_price_per_unit ?? ''),
-              location:
-                booking.collection_location ||
-                booking.product?.location ||
-                '',
-              message: '',
-            };
+            const previous = previousForms[booking.id];
+            const requestedQuantity = booking.quantity ?? '';
+
+            nextForms[booking.id] = previous
+              ? {
+                  ...previous,
+                  collectionLocation:
+                    previous.collectionLocation ||
+                    booking.collection_location ||
+                    booking.product?.location ||
+                    '',
+                }
+              : {
+                  ...EMPTY_FORM,
+                  quantity: requestedQuantity,
+                  price:
+                    booking.requested_price_per_unit ?? '',
+                  collectionLocation:
+                    booking.collection_location ||
+                    booking.product?.location ||
+                    '',
+                };
           });
 
-          return next;
+          return nextForms;
+        });
+
+        setExpandedId((previousId) => {
+          if (
+            previousId &&
+            enrichedBookings.some(
+              (booking) => booking.id === previousId
+            )
+          ) {
+            return previousId;
+          }
+
+          return null;
         });
       } catch (error) {
-        console.error('Unable to load pre-harvest bookings:', error);
-        toast.error(error.message || 'Could not load booking requests.');
+        console.error('Error loading pre-harvest bookings:', error);
+
+        if (
+          mountedRef.current &&
+          requestId === requestIdRef.current
+        ) {
+          const message = getErrorMessage(error);
+          setLoadError(message);
+          toast.error(`Unable to load bookings: ${message}`);
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (
+          mountedRef.current &&
+          requestId === requestIdRef.current
+        ) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
-    [isAggregator]
+    [hasValidRole, isAggregator]
   );
 
   useEffect(() => {
     loadBookings();
+  }, [loadBookings]);
+
+  useEffect(() => {
+    if (!hasValidRole || !currentUserId) return undefined;
 
     const channel = supabase
-      .channel(`preharvest-${role}-bookings`)
+      .channel(
+        `preharvest-bookings-${role}-${currentUserId}`
+      )
       .on(
         'postgres_changes',
         {
@@ -204,120 +463,172 @@ export default function PreHarvestBookingManager({ role }) {
           table: 'preharvest_bookings',
         },
         () => {
-          loadBookings(true);
+          loadBookings({ quiet: true });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn(
+            'Pre-harvest booking realtime subscription encountered an error.'
+          );
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadBookings, role]);
+  }, [hasValidRole, currentUserId, role, loadBookings]);
 
-  const updateForm = (bookingId, field, value) => {
+  const updateForm = useCallback((bookingId, field, value) => {
     setForms((previous) => ({
       ...previous,
       [bookingId]: {
-        ...(previous[bookingId] || {}),
+        ...EMPTY_FORM,
+        ...previous[bookingId],
         [field]: value,
       },
     }));
-  };
+  }, []);
 
-  // Open the custom confirmation modal.
-  const respond = (booking) => {
-    if (submittingId) return;
-
-    const form = forms[booking.id];
-
-    if (!form) return;
-
-    if (!['accepted', 'rejected'].includes(form.decision)) {
-      toast.error('Choose whether to accept or reject this request.');
-      return;
-    }
-
-    setConfirmation({
-      booking,
-      decision: form.decision,
-    });
-  };
-
-  // Validate and submit only after the user confirms in the modal.
-  const submitResponse = async (booking, decision) => {
-    const form = forms[booking.id];
-
-    if (!form || submittingId) return;
-
-    if (!['accepted', 'rejected'].includes(decision)) {
-      toast.error('Invalid booking decision.');
-      return;
-    }
+  const openConfirmation = (booking) => {
+    const form = forms[booking.id] || EMPTY_FORM;
 
     if (booking.status !== 'pending') {
-      setConfirmation(null);
-      toast.error('This booking is no longer awaiting a response.');
-      await loadBookings(true);
+      toast.error('This booking has already received a response.');
       return;
     }
 
-    if (decision === 'accepted') {
-      const quantity = Number(form.quantity);
-      const price = Number(form.price);
+    if (!['accepted', 'rejected'].includes(form.decision)) {
+      toast.error('Choose whether to accept or reject this booking.');
+      return;
+    }
+
+    if (form.decision === 'accepted') {
+      const requestedQuantity = Number(booking.quantity);
+      const acceptedQuantity = Number(form.quantity);
+      const acceptedPrice = Number(form.price);
 
       if (
-        form.quantity === '' ||
-        !Number.isFinite(quantity) ||
-        quantity <= 0
+        !Number.isFinite(acceptedQuantity) ||
+        acceptedQuantity <= 0
       ) {
         toast.error('Enter a valid confirmed quantity.');
         return;
       }
 
-      if (quantity > Number(booking.quantity)) {
+      if (
+        !Number.isFinite(requestedQuantity) ||
+        requestedQuantity <= 0
+      ) {
+        toast.error('The requested quantity is invalid.');
+        return;
+      }
+
+      if (acceptedQuantity > requestedQuantity) {
         toast.error(
-          'Confirmed quantity cannot exceed the requested quantity.'
+          'The confirmed quantity cannot exceed the requested quantity.'
         );
         return;
       }
 
       if (
         form.price === '' ||
-        !Number.isFinite(price) ||
-        price < 0
+        !Number.isFinite(acceptedPrice) ||
+        acceptedPrice < 0
       ) {
         toast.error('Enter a valid price per unit.');
         return;
       }
 
-      if (!form.location?.trim()) {
+      if (!form.collectionLocation.trim()) {
         toast.error('Enter the collection location.');
         return;
       }
     }
 
+    setConfirmation({
+      bookingId: booking.id,
+      decision: form.decision,
+      cropName:
+        booking.product?.crop_name || 'this produce',
+    });
+  };
+
+  const submitResponse = async () => {
+    const pendingConfirmation = confirmationRef.current;
+
+    if (!pendingConfirmation || submittingRef.current) return;
+
+    const booking = bookings.find(
+      (item) => item.id === pendingConfirmation.bookingId
+    );
+
+    if (!booking) {
+      setConfirmation(null);
+      toast.error('This booking could not be found. Refresh and try again.');
+      return;
+    }
+
+    if (booking.status !== 'pending') {
+      setConfirmation(null);
+      toast.error('This booking is no longer awaiting a response.');
+      await loadBookings({ quiet: true });
+      return;
+    }
+
+    const form = forms[booking.id] || EMPTY_FORM;
+    const decision = pendingConfirmation.decision;
+
+    if (!currentUserId) {
+      toast.error('Your session has expired. Please sign in again.');
+      return;
+    }
+
+    submittingRef.current = true;
     setSubmittingId(booking.id);
 
     try {
+      const acceptedQuantity =
+        decision === 'accepted' ? Number(form.quantity) : null;
+
+      const acceptedPrice =
+        decision === 'accepted' ? Number(form.price) : null;
+
+      const acceptedLocation =
+        decision === 'accepted'
+          ? form.collectionLocation.trim()
+          : null;
+
+      if (
+        decision === 'accepted' &&
+        (
+          !Number.isFinite(acceptedQuantity) ||
+          acceptedQuantity <= 0 ||
+          acceptedQuantity > Number(booking.quantity) ||
+          !Number.isFinite(acceptedPrice) ||
+          acceptedPrice < 0 ||
+          !acceptedLocation
+        )
+      ) {
+        toast.error('Check the confirmed quantity, price and collection location.');
+        return;
+      }
+
       const { error } = await supabase.rpc(
         'respond_to_preharvest_booking',
         {
           target_booking_id: booking.id,
           decision,
-          response_message: form.message?.trim() || null,
-          accepted_quantity:
-            decision === 'accepted' ? Number(form.quantity) : null,
-          accepted_price_per_unit:
-            decision === 'accepted' ? Number(form.price) : null,
-          accepted_collection_location:
-            decision === 'accepted' ? form.location.trim() : null,
+          response_message: form.message.trim() || null,
+          accepted_quantity: acceptedQuantity,
+          accepted_price_per_unit: acceptedPrice,
+          accepted_collection_location: acceptedLocation,
         }
       );
 
       if (error) throw error;
 
       setConfirmation(null);
-      setExpandedId(null);
 
       toast.success(
         decision === 'accepted'
@@ -325,547 +636,752 @@ export default function PreHarvestBookingManager({ role }) {
           : 'Booking rejected successfully.'
       );
 
-      await loadBookings(true);
+      await loadBookings({ quiet: true });
     } catch (error) {
-      console.error('Unable to respond to booking:', error);
-      toast.error(error.message || 'Could not update this booking.');
+      console.error('Error responding to booking:', error);
+
+      toast.error(
+        `Unable to respond to booking: ${getErrorMessage(error)}`
+      );
+
+      // Refresh after a failed response because the database may
+      // have changed since this page was last loaded.
+      await loadBookings({ quiet: true });
     } finally {
-      setSubmittingId(null);
+      submittingRef.current = false;
+
+      if (mountedRef.current) {
+        setSubmittingId(null);
+      }
     }
   };
 
-  const confirmResponse = async () => {
-    if (!confirmation || submittingId) return;
+  const visibleBookings = bookings.filter((booking) =>
+    getBookingFilterStatus(booking, filter)
+  );
 
-    const { booking, decision } = confirmation;
-
-    await submitResponse(booking, decision);
+  const counts = {
+    pending: bookings.filter(
+      (booking) => booking.status === 'pending'
+    ).length,
+    active: bookings.filter((booking) =>
+      ACTIVE_STATUSES.includes(booking.status)
+    ).length,
+    completed: bookings.filter(
+      (booking) => booking.status === 'completed'
+    ).length,
+    rejected: bookings.filter(
+      (booking) => booking.status === 'rejected'
+    ).length,
+    cancelled: bookings.filter(
+      (booking) => booking.status === 'cancelled'
+    ).length,
   };
 
-  const visibleBookings = bookings.filter((booking) => {
-    if (filter === 'all') return true;
-
-    if (filter === 'pending') {
-      return booking.status === 'pending';
-    }
-
-    if (filter === 'active') {
-      return [
-        'accepted',
-        'payment_pending',
-        'payment_confirmed',
-        'harvest_ready',
-      ].includes(booking.status);
-    }
-
-    return booking.status === filter;
-  });
-
-  const pendingCount = bookings.filter(
-    (booking) => booking.status === 'pending'
-  ).length;
-
-  const activeCount = bookings.filter((booking) =>
-    [
-      'accepted',
-      'payment_pending',
-      'payment_confirmed',
-      'harvest_ready',
-    ].includes(booking.status)
-  ).length;
-
-  if (loading) {
+  if (!hasValidRole) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-9 w-9 animate-spin text-emerald-600" />
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="mt-0.5 text-amber-600" size={22} />
+          <div>
+            <h2 className="font-semibold text-amber-900">
+              Access unavailable
+            </h2>
+            <p className="mt-1 text-sm text-amber-800">
+              This page is only available to producer and aggregator accounts.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!sessionChecked && loading) {
+    return (
+      <div className="flex min-h-64 items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-slate-500">
+          <Loader2 className="animate-spin text-emerald-600" size={32} />
+          <p className="text-sm font-medium">Loading pre-harvest bookings...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-6xl">
-        <header className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-emerald-700">
-              <Sprout size={18} />
-              AgroLink
-            </div>
-
-            <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
-              {isAggregator
-                ? 'Farmer Booking Requests'
-                : 'Pre-Harvest Requests'}
-            </h1>
-
-            <p className="mt-2 text-sm text-gray-600">
-              {isAggregator
-                ? 'Review requests assigned to you for farmers you represent.'
-                : 'Review buyers’ crop requests and confirm the booking terms.'}
-            </p>
+    <div className="space-y-6">
+      {/* Page heading */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-emerald-700">
+            <Sprout size={20} />
+            <span className="text-xs font-bold uppercase tracking-wider">
+              AgroLink Marketplace
+            </span>
           </div>
 
-          <button
-            type="button"
-            onClick={() => loadBookings(true)}
-            disabled={refreshing}
-            className="inline-flex items-center justify-center gap-2 self-start rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-60 sm:self-auto"
-          >
-            <RefreshCw
-              size={16}
-              className={refreshing ? 'animate-spin' : ''}
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            Pre-Harvest Bookings
+          </h1>
+
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            {isAggregator
+              ? 'Review pre-harvest bookings assigned to you and respond on behalf of your linked farmers.'
+              : 'Review buyer requests for your produce and confirm the terms before moving forward.'}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => loadBookings({ quiet: true })}
+          disabled={refreshing || loading}
+          className="inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
+        >
+          <RefreshCw
+            size={16}
+            className={refreshing ? 'animate-spin' : ''}
+          />
+          Refresh
+        </button>
+      </div>
+
+      {/* Error state */}
+      {loadError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle
+              size={20}
+              className="mt-0.5 shrink-0 text-red-600"
             />
-            Refresh
-          </button>
-        </header>
-
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            { label: 'All Requests', value: bookings.length },
-            { label: 'Pending', value: pendingCount },
-            { label: 'Accepted / Active', value: activeCount },
-            {
-              label: 'Completed',
-              value: bookings.filter(
-                (booking) => booking.status === 'completed'
-              ).length,
-            },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="rounded-2xl border bg-white p-4 shadow-sm"
-            >
-              <p className="text-sm text-gray-500">{item.label}</p>
-              <p className="mt-1 text-2xl font-bold text-gray-900">
-                {item.value}
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-red-900">
+                We could not load your bookings
               </p>
+              <p className="mt-1 break-words text-sm text-red-800">
+                {loadError}
+              </p>
+              <button
+                type="button"
+                onClick={() => loadBookings()}
+                className="mt-3 text-sm font-semibold text-red-800 underline underline-offset-2"
+              >
+                Try again
+              </button>
             </div>
-          ))}
-        </div>
-
-        <div className="mb-6 flex flex-wrap gap-2">
-          {[
-            ['pending', 'Pending'],
-            ['active', 'Active'],
-            ['completed', 'Completed'],
-            ['rejected', 'Rejected'],
-            ['cancelled', 'Cancelled'],
-            ['all', 'All'],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setFilter(value)}
-              className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                filter === value
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {visibleBookings.length === 0 ? (
-          <div className="rounded-2xl border border-dashed bg-white px-5 py-14 text-center">
-            <Sprout className="mx-auto h-10 w-10 text-emerald-600" />
-
-            <h2 className="mt-4 text-lg font-bold text-gray-900">
-              No booking requests found
-            </h2>
-
-            <p className="mt-2 text-sm text-gray-500">
-              Requests matching this filter will appear here.
-            </p>
           </div>
-        ) : (
-          <div className="space-y-5">
-            {visibleBookings.map((booking) => {
-              const form = forms[booking.id] || {};
-              const isPending = booking.status === 'pending';
-              const expanded = expandedId === booking.id;
-              const isSubmitting = submittingId === booking.id;
+        </div>
+      )}
 
-              return (
-                <article
-                  key={booking.id}
-                  className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-500">Pending</p>
+            <Clock size={18} className="text-amber-600" />
+          </div>
+          <p className="mt-3 text-3xl font-bold text-slate-900">
+            {counts.pending}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">Awaiting your response</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-500">Active</p>
+            <Package size={18} className="text-blue-600" />
+          </div>
+          <p className="mt-3 text-3xl font-bold text-slate-900">
+            {counts.active}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">In progress</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-500">Completed</p>
+            <CheckCircle2 size={18} className="text-emerald-600" />
+          </div>
+          <p className="mt-3 text-3xl font-bold text-slate-900">
+            {counts.completed}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">Successfully completed</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-500">Total</p>
+            <CalendarDays size={18} className="text-slate-600" />
+          </div>
+          <p className="mt-3 text-3xl font-bold text-slate-900">
+            {bookings.length}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">Bookings received</p>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {FILTERS.map((item) => {
+            const selected = filter === item.value;
+            const count =
+              item.value === 'all'
+                ? bookings.length
+                : counts[item.value];
+
+            return (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setFilter(item.value)}
+                className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                  selected
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {item.label}
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs ${
+                    selected
+                      ? 'bg-white/20 text-white'
+                      : 'bg-white text-slate-600'
+                  }`}
                 >
-                  <div className="p-4 sm:p-6">
-                    <div className="flex flex-col justify-between gap-4 sm:flex-row">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-xl font-bold text-gray-900">
-                            {booking.product?.crop_name ||
-                              'Pre-Harvest Product'}
-                          </h2>
+                  {count ?? 0}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                              booking.status === 'pending'
-                                ? 'bg-amber-50 text-amber-700'
-                                : booking.status === 'accepted'
-                                  ? 'bg-emerald-50 text-emerald-700'
-                                  : booking.status === 'rejected'
-                                    ? 'bg-red-50 text-red-700'
-                                    : booking.status === 'completed'
-                                      ? 'bg-blue-50 text-blue-700'
-                                      : 'bg-gray-100 text-gray-700'
-                            }`}
-                          >
-                            {STATUS_LABELS[booking.status] ||
-                              booking.status}
-                          </span>
+      {/* Booking list */}
+      {loading ? (
+        <div className="flex min-h-48 items-center justify-center rounded-2xl border border-slate-200 bg-white">
+          <div className="flex items-center gap-3 text-slate-500">
+            <Loader2
+              size={24}
+              className="animate-spin text-emerald-600"
+            />
+            <span className="text-sm font-medium">Loading bookings...</span>
+          </div>
+        </div>
+      ) : visibleBookings.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+            <Sprout size={28} />
+          </div>
+
+          <h2 className="mt-4 text-lg font-bold text-slate-900">
+            {bookings.length === 0
+              ? 'No pre-harvest bookings yet'
+              : 'No bookings in this category'}
+          </h2>
+
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
+            {bookings.length === 0
+              ? 'When buyers request produce before harvest, their bookings will appear here.'
+              : 'Try selecting another status filter to see more bookings.'}
+          </p>
+
+          {filter !== 'all' && bookings.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setFilter('all')}
+              className="mt-5 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            >
+              View all bookings
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {visibleBookings.map((booking) => {
+            const form = forms[booking.id] || EMPTY_FORM;
+            const isExpanded = expandedId === booking.id;
+            const isPending = booking.status === 'pending';
+            const isSubmitting = submittingId === booking.id;
+
+            const cropName =
+              booking.product?.crop_name || 'Produce listing';
+
+            const requestedQuantity = Number(booking.quantity) || 0;
+            const requestedPrice =
+              Number(booking.requested_price_per_unit) || 0;
+
+            const confirmedQuantity =
+              booking.confirmed_quantity == null
+                ? null
+                : Number(booking.confirmed_quantity);
+
+            const confirmedPrice =
+              booking.confirmed_price_per_unit == null
+                ? null
+                : Number(booking.confirmed_price_per_unit);
+
+            const confirmedTotal =
+              confirmedQuantity !== null && confirmedPrice !== null
+                ? confirmedQuantity * confirmedPrice
+                : null;
+
+            return (
+              <article
+                key={booking.id}
+                className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
+              >
+                {/* Card header */}
+                <div className="p-4 sm:p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                        <Sprout size={24} />
+                      </div>
+
+                      <div className="min-w-0">
+                        <h2 className="break-words text-lg font-bold text-slate-900">
+                          {cropName}
+                        </h2>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          Booking ID: {booking.id.slice(0, 8)}
+                        </p>
+
+                        <div className="mt-2">
+                          <StatusBadge status={booking.status} />
                         </div>
-
-                        <p className="mt-2 flex items-center gap-1.5 text-sm text-gray-500">
-                          <MapPin size={15} />
-                          {booking.product?.location ||
-                            'Location not specified'}
-                        </p>
-
-                        <p className="mt-3 text-sm text-gray-700">
-                          <strong>Buyer:</strong>{' '}
-                          {booking.buyer?.full_name || 'Buyer'}
-                        </p>
-
-                        {booking.buyer?.phone_number && (
-                          <p className="mt-1 text-sm text-gray-600">
-                            <strong>Phone:</strong>{' '}
-                            {booking.buyer.phone_number}
-                          </p>
-                        )}
-
-                        {isAggregator && (
-                          <p className="mt-1 text-sm text-gray-600">
-                            <strong>Producer:</strong>{' '}
-                            {booking.producer?.full_name || 'Farmer'}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="sm:text-right">
-                        <p className="text-xs text-gray-500">
-                          Requested quantity
-                        </p>
-
-                        <p className="mt-1 text-lg font-bold text-gray-900">
-                          {Number(booking.quantity).toLocaleString('en-NG')}{' '}
-                          {booking.unit || booking.product?.unit || ''}
-                        </p>
-
-                        <p className="mt-1 text-sm text-gray-600">
-                          {money(booking.requested_price_per_unit)} / unit
-                        </p>
-
-                        <p className="mt-1 text-sm font-semibold text-emerald-700">
-                          Estimated: {money(booking.estimated_total)}
-                        </p>
                       </div>
                     </div>
 
-                    <div className="mt-5 grid gap-3 border-t pt-4 sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs text-gray-500">
-                          Requested collection
-                        </p>
-                        <p className="mt-1 text-sm font-medium text-gray-800">
-                          {dateLabel(booking.requested_collection_date)}
-                        </p>
-                      </div>
+                    <div className="shrink-0 sm:text-right">
+                      <p className="text-xs font-medium text-slate-500">
+                        Requested value
+                      </p>
+                      <p className="mt-1 text-xl font-bold text-emerald-700">
+                        {formatCurrency(
+                          booking.estimated_total ??
+                            requestedQuantity * requestedPrice
+                        )}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {requestedQuantity} {booking.unit || booking.product?.unit || 'units'}
+                      </p>
+                    </div>
+                  </div>
 
-                      <div>
-                        <p className="text-xs text-gray-500">
-                          Request received
-                        </p>
-                        <p className="mt-1 text-sm font-medium text-gray-800">
-                          {dateLabel(booking.created_at)}
-                        </p>
+                  {/* Booking summary */}
+                  <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2 lg:grid-cols-3">
+                    <DetailRow
+                      icon={UserRound}
+                      label="Buyer"
+                      value={getProfileName(booking.buyer)}
+                    />
+
+                    {isAggregator && (
+                      <DetailRow
+                        icon={Sprout}
+                        label="Producer"
+                        value={getProfileName(booking.producer)}
+                      />
+                    )}
+
+                    <DetailRow
+                      icon={MapPin}
+                      label="Collection area"
+                      value={
+                        booking.collection_location ||
+                        booking.product?.location ||
+                        'To be agreed'
+                      }
+                    />
+
+                    <DetailRow
+                      icon={Package}
+                      label="Quantity requested"
+                      value={`${requestedQuantity} ${booking.unit || booking.product?.unit || 'units'}`}
+                    />
+
+                    <DetailRow
+                      icon={CalendarDays}
+                      label="Requested collection date"
+                      value={formatDate(booking.requested_collection_date)}
+                    />
+
+                    <DetailRow
+                      icon={Clock}
+                      label="Booking received"
+                      value={formatDateTime(booking.created_at)}
+                    />
+                  </div>
+
+                  {booking.buyer_notes && (
+                    <div className="mt-5 rounded-xl bg-slate-50 p-4">
+                      <div className="flex items-start gap-2">
+                        <MessageSquare
+                          size={17}
+                          className="mt-0.5 shrink-0 text-slate-500"
+                        />
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">
+                            Buyer&apos;s notes
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">
+                            {booking.buyer_notes}
+                          </p>
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                    {booking.buyer_notes && (
-                      <div className="mt-4 rounded-xl bg-gray-50 p-4">
-                        <p className="text-xs font-semibold uppercase text-gray-500">
-                          Buyer’s notes
-                        </p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
-                          {booking.buyer_notes}
-                        </p>
-                      </div>
-                    )}
+                  {booking.producer_response && (
+                    <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                      <p className="text-sm font-semibold text-blue-900">
+                        Previous response
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-blue-800">
+                        {booking.producer_response}
+                      </p>
+                    </div>
+                  )}
 
-                    {booking.producer_response && (
-                      <div className="mt-4 rounded-xl bg-blue-50 p-4">
-                        <p className="flex items-center gap-2 text-sm font-semibold text-blue-900">
-                          <AlertCircle size={16} />
-                          Previous response
-                        </p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm text-blue-800">
-                          {booking.producer_response}
-                        </p>
-                      </div>
-                    )}
+                  {/* Confirmed terms */}
+                  {!isPending && confirmedQuantity !== null && (
+                    <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                      <div className="flex items-start gap-2">
+                        <CheckCircle2
+                          size={18}
+                          className="mt-0.5 shrink-0 text-emerald-700"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-emerald-900">
+                            Confirmed booking terms
+                          </p>
 
-                    {!isPending && (
-                      <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 p-4">
-                        <p className="flex items-center gap-2 text-sm font-semibold text-emerald-900">
-                          <CheckCircle2 size={17} />
-                          {booking.status === 'rejected'
-                            ? 'Booking Rejected'
-                            : booking.status === 'cancelled'
-                              ? 'Booking Cancelled'
-                              : 'Confirmed Booking Terms'}
-                        </p>
-
-                        {['accepted', 'payment_pending', 'payment_confirmed', 'harvest_ready', 'completed'].includes(
-                          booking.status
-                        ) && (
-                          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
                             <div>
-                              <p className="text-xs text-gray-500">
-                                Quantity
+                              <p className="text-xs text-emerald-700">
+                                Confirmed quantity
                               </p>
-                              <p className="mt-1 text-sm font-bold text-gray-900">
-                                {booking.confirmed_quantity ?? '—'}{' '}
-                                {booking.unit || ''}
-                              </p>
-                            </div>
-
-                            <div>
-                              <p className="text-xs text-gray-500">
-                                Price per unit
-                              </p>
-                              <p className="mt-1 text-sm font-bold text-gray-900">
-                                {booking.confirmed_price_per_unit == null
-                                  ? '—'
-                                  : money(booking.confirmed_price_per_unit)}
+                              <p className="mt-1 text-sm font-bold text-emerald-900">
+                                {confirmedQuantity} {booking.unit || booking.product?.unit || 'units'}
                               </p>
                             </div>
 
-                            <div>
-                              <p className="text-xs text-gray-500">
-                                Collection location
-                              </p>
-                              <p className="mt-1 text-sm font-bold text-gray-900">
-                                {booking.collection_location || '—'}
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {isPending && (
-                      <div className="mt-5 border-t pt-5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedId(expanded ? null : booking.id)
-                          }
-                          className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
-                        >
-                          {expanded
-                            ? 'Close Response Form'
-                            : 'Review & Respond'}
-                        </button>
-
-                        {expanded && (
-                          <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4 sm:p-5">
-                            <h3 className="font-bold text-gray-900">
-                              Respond to booking
-                            </h3>
-
-                            <div className="mt-4">
-                              <label
-                                htmlFor={`decision-${booking.id}`}
-                                className="mb-2 block text-sm font-medium text-gray-700"
-                              >
-                                Decision
-                              </label>
-
-                              <select
-                                id={`decision-${booking.id}`}
-                                value={form.decision || 'accepted'}
-                                onChange={(event) =>
-                                  updateForm(
-                                    booking.id,
-                                    'decision',
-                                    event.target.value
-                                  )
-                                }
-                                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-500"
-                              >
-                                <option value="accepted">
-                                  Accept booking
-                                </option>
-                                <option value="rejected">
-                                  Reject booking
-                                </option>
-                              </select>
-                            </div>
-
-                            {form.decision === 'accepted' && (
-                              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                                <div>
-                                  <label
-                                    htmlFor={`quantity-${booking.id}`}
-                                    className="mb-2 block text-sm font-medium text-gray-700"
-                                  >
-                                    Confirmed quantity (
-                                    {booking.unit || 'units'})
-                                  </label>
-
-                                  <input
-                                    id={`quantity-${booking.id}`}
-                                    type="number"
-                                    min="0.01"
-                                    max={booking.quantity}
-                                    step="any"
-                                    value={form.quantity ?? ''}
-                                    onChange={(event) =>
-                                      updateForm(
-                                        booking.id,
-                                        'quantity',
-                                        event.target.value
-                                      )
-                                    }
-                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-500"
-                                  />
-
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    Maximum requested: {booking.quantity}
-                                  </p>
-                                </div>
-
-                                <div>
-                                  <label
-                                    htmlFor={`price-${booking.id}`}
-                                    className="mb-2 block text-sm font-medium text-gray-700"
-                                  >
-                                    Confirmed price per unit (NGN)
-                                  </label>
-
-                                  <input
-                                    id={`price-${booking.id}`}
-                                    type="number"
-                                    min="0"
-                                    step="any"
-                                    value={form.price ?? ''}
-                                    onChange={(event) =>
-                                      updateForm(
-                                        booking.id,
-                                        'price',
-                                        event.target.value
-                                      )
-                                    }
-                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-500"
-                                  />
-                                </div>
-
-                                <div className="sm:col-span-2">
-                                  <label
-                                    htmlFor={`location-${booking.id}`}
-                                    className="mb-2 block text-sm font-medium text-gray-700"
-                                  >
-                                    Collection location
-                                  </label>
-
-                                  <input
-                                    id={`location-${booking.id}`}
-                                    type="text"
-                                    value={form.location ?? ''}
-                                    onChange={(event) =>
-                                      updateForm(
-                                        booking.id,
-                                        'location',
-                                        event.target.value
-                                      )
-                                    }
-                                    placeholder="Enter the agreed pickup location"
-                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-500"
-                                  />
-                                </div>
+                            {confirmedPrice !== null && (
+                              <div>
+                                <p className="text-xs text-emerald-700">
+                                  Confirmed price per unit
+                                </p>
+                                <p className="mt-1 text-sm font-bold text-emerald-900">
+                                  {formatCurrency(confirmedPrice)}
+                                </p>
                               </div>
                             )}
 
-                            <div className="mt-4">
-                              <label
-                                htmlFor={`message-${booking.id}`}
-                                className="mb-2 block text-sm font-medium text-gray-700"
-                              >
-                                Response message (optional)
-                              </label>
+                            {confirmedTotal !== null && (
+                              <div>
+                                <p className="text-xs text-emerald-700">
+                                  Estimated confirmed total
+                                </p>
+                                <p className="mt-1 text-sm font-bold text-emerald-900">
+                                  {formatCurrency(confirmedTotal)}
+                                </p>
+                              </div>
+                            )}
 
-                              <textarea
-                                id={`message-${booking.id}`}
-                                rows={3}
-                                maxLength={1000}
-                                value={form.message ?? ''}
+                            {booking.collection_location && (
+                              <div>
+                                <p className="text-xs text-emerald-700">
+                                  Collection location
+                                </p>
+                                <p className="mt-1 break-words text-sm font-bold text-emerald-900">
+                                  {booking.collection_location}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-slate-500">
+                      Last updated: {formatDateTime(booking.updated_at || booking.created_at)}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedId(isExpanded ? null : booking.id)
+                      }
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      {isExpanded ? 'Hide details' : 'View details'}
+                      <span aria-hidden="true">{isExpanded ? '−' : '+'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Expandable response form */}
+                {isExpanded && (
+                  <div className="border-t border-slate-200 bg-slate-50/70 p-4 sm:p-6">
+                    {isPending ? (
+                      <div className="space-y-5">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-900">
+                            Respond to booking
+                          </h3>
+                          <p className="mt-1 text-sm leading-6 text-slate-500">
+                            Review the request and confirm the terms before submitting your response.
+                          </p>
+                        </div>
+
+                        <FormField label="Your decision">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateForm(
+                                  booking.id,
+                                  'decision',
+                                  'accepted'
+                                )
+                              }
+                              className={`flex min-h-12 items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                                form.decision === 'accepted'
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-100'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <CheckCircle2 size={18} />
+                              Accept booking
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateForm(
+                                  booking.id,
+                                  'decision',
+                                  'rejected'
+                                )
+                              }
+                              className={`flex min-h-12 items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+                                form.decision === 'rejected'
+                                  ? 'border-red-400 bg-red-50 text-red-800 ring-2 ring-red-100'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <XCircle size={18} />
+                              Reject booking
+                            </button>
+                          </div>
+                        </FormField>
+
+                        {form.decision === 'accepted' && (
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <FormField
+                              label="Confirmed quantity"
+                              hint={`Buyer requested ${requestedQuantity} ${booking.unit || booking.product?.unit || 'units'}. You cannot confirm more than this amount.`}
+                            >
+                              <input
+                                type="number"
+                                min="0.01"
+                                max={requestedQuantity}
+                                step="any"
+                                value={form.quantity}
                                 onChange={(event) =>
                                   updateForm(
                                     booking.id,
-                                    'message',
+                                    'quantity',
                                     event.target.value
                                   )
                                 }
-                                placeholder="Add details for the buyer..."
-                                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-500"
+                                className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                placeholder="Enter confirmed quantity"
                               />
+                            </FormField>
+
+                            <FormField label="Confirmed price per unit (NGN)">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={form.price}
+                                onChange={(event) =>
+                                  updateForm(
+                                    booking.id,
+                                    'price',
+                                    event.target.value
+                                  )
+                                }
+                                className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                placeholder="Enter price per unit"
+                              />
+                            </FormField>
+
+                            <div className="sm:col-span-2">
+                              <FormField
+                                label="Collection location"
+                                hint="Specify where the buyer should collect the produce."
+                              >
+                                <input
+                                  type="text"
+                                  value={form.collectionLocation}
+                                  onChange={(event) =>
+                                    updateForm(
+                                      booking.id,
+                                      'collectionLocation',
+                                      event.target.value
+                                    )
+                                  }
+                                  maxLength={300}
+                                  className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                                  placeholder="Enter collection address or farm location"
+                                />
+                              </FormField>
                             </div>
 
-                            <div className="mt-4 flex flex-wrap gap-3">
-                              <button
-                                type="button"
-                                onClick={() => respond(booking)}
-                                disabled={Boolean(submittingId)}
-                                className={`inline-flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-60 ${
-                                  form.decision === 'rejected'
-                                    ? 'bg-red-600 hover:bg-red-700'
-                                    : 'bg-emerald-600 hover:bg-emerald-700'
-                                }`}
-                              >
-                                {form.decision === 'rejected' ? (
-                                  <XCircle size={16} />
-                                ) : (
-                                  <CheckCircle2 size={16} />
-                                )}
-
-                                {form.decision === 'rejected'
-                                  ? 'Review Rejection'
-                                  : 'Review Acceptance'}
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setExpandedId(null)}
-                                disabled={Boolean(submittingId)}
-                                className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-60"
-                              >
-                                Cancel
-                              </button>
-                            </div>
+                            {form.quantity !== '' &&
+                              form.price !== '' &&
+                              Number(form.quantity) > 0 &&
+                              Number(form.price) >= 0 && (
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 sm:col-span-2">
+                                  <p className="text-sm font-medium text-emerald-800">
+                                    Estimated confirmed total
+                                  </p>
+                                  <p className="mt-1 text-2xl font-bold text-emerald-900">
+                                    {formatCurrency(
+                                      Number(form.quantity) *
+                                        Number(form.price)
+                                    )}
+                                  </p>
+                                  <p className="mt-1 text-xs text-emerald-700">
+                                    Based on your confirmed quantity and price. Final arrangements remain between buyer and seller.
+                                  </p>
+                                </div>
+                              )}
                           </div>
                         )}
+
+                        <FormField
+                          label={
+                            form.decision === 'accepted'
+                              ? 'Message to buyer (optional)'
+                              : 'Reason for rejection (recommended)'
+                          }
+                        >
+                          <textarea
+                            rows={3}
+                            maxLength={1000}
+                            value={form.message}
+                            onChange={(event) =>
+                              updateForm(
+                                booking.id,
+                                'message',
+                                event.target.value
+                              )
+                            }
+                            className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                            placeholder={
+                              form.decision === 'accepted'
+                                ? 'Add useful details for the buyer...'
+                                : 'Explain why you cannot fulfil this request...'
+                            }
+                          />
+                          <p className="mt-1 text-right text-xs text-slate-400">
+                            {form.message.length}/1000
+                          </p>
+                        </FormField>
+
+                        {form.decision === 'rejected' && (
+                          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                            <AlertCircle
+                              size={18}
+                              className="mt-0.5 shrink-0"
+                            />
+                            <p>
+                              Rejecting this booking records your decision. Make sure you have selected the correct booking before continuing.
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedId(null)}
+                            disabled={isSubmitting}
+                            className="min-h-11 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
+                          >
+                            Close
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openConfirmation(booking)}
+                            disabled={isSubmitting || submittingId !== null}
+                            className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                              form.decision === 'rejected'
+                                ? 'bg-red-600 hover:bg-red-700'
+                                : 'bg-emerald-600 hover:bg-emerald-700'
+                            }`}
+                          >
+                            {isSubmitting ? (
+                              <>
+                                <Loader2 size={17} className="animate-spin" />
+                                Submitting...
+                              </>
+                            ) : (
+                              <>
+                                {form.decision === 'rejected' ? (
+                                  <XCircle size={17} />
+                                ) : (
+                                  <CheckCircle2 size={17} />
+                                )}
+                                Review and submit
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-3">
+                        <CheckCircle2
+                          size={20}
+                          className="mt-0.5 shrink-0 text-emerald-600"
+                        />
+                        <div>
+                          <h3 className="font-semibold text-slate-900">
+                            This booking has already been responded to
+                          </h3>
+                          <p className="mt-1 text-sm leading-6 text-slate-600">
+                            Its current status is{' '}
+                            <span className="font-semibold">
+                              {STATUS_LABELS[booking.status] ||
+                                booking.status}
+                            </span>
+                            . Any further status changes must follow the existing booking workflow.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
 
-      {/* AgroLink confirmation modal */}
+      {/* Confirmation modal */}
       {confirmation && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/55 p-4 backdrop-blur-sm"
-          onClick={(event) => {
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
             if (
               event.target === event.currentTarget &&
-              !submittingId
+              !submittingRef.current
             ) {
               setConfirmation(null);
             }
@@ -875,179 +1391,154 @@ export default function PreHarvestBookingManager({ role }) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="booking-confirmation-title"
-            aria-describedby="booking-confirmation-description"
-            className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl"
+            className="my-auto w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
           >
             <div
-              className={`px-6 pb-6 pt-7 ${
-                confirmation.decision === 'accepted'
-                  ? 'bg-gradient-to-br from-emerald-50 via-white to-green-50'
-                  : 'bg-gradient-to-br from-red-50 via-white to-rose-50'
+              className={`flex items-center justify-between border-b p-5 ${
+                confirmation.decision === 'rejected'
+                  ? 'border-red-100 bg-red-50'
+                  : 'border-emerald-100 bg-emerald-50'
               }`}
             >
-              <div className="mb-5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
-                    <Sprout size={20} />
-                  </div>
-                  <span className="text-sm font-bold tracking-wide text-gray-800">
-                    AgroLink
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  aria-label="Close confirmation"
-                  onClick={() => {
-                    if (!submittingId) setConfirmation(null);
-                  }}
-                  disabled={Boolean(submittingId)}
-                  className="rounded-full p-2 text-gray-400 transition hover:bg-white hover:text-gray-700 disabled:opacity-50"
+              <div className="flex items-center gap-3">
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                    confirmation.decision === 'rejected'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-emerald-100 text-emerald-700'
+                  }`}
                 >
-                  <XCircle size={20} />
-                </button>
-              </div>
-
-              <div
-                className={`mb-4 flex h-14 w-14 items-center justify-center rounded-2xl ${
-                  confirmation.decision === 'accepted'
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-red-100 text-red-600'
-                }`}
-              >
-                {confirmation.decision === 'accepted' ? (
-                  <CheckCircle2 size={30} />
-                ) : (
-                  <AlertCircle size={30} />
-                )}
-              </div>
-
-              <h2
-                id="booking-confirmation-title"
-                className="text-xl font-bold text-gray-900 sm:text-2xl"
-              >
-                {confirmation.decision === 'accepted'
-                  ? 'Accept this booking?'
-                  : 'Reject this booking?'}
-              </h2>
-
-              <p
-                id="booking-confirmation-description"
-                className="mt-3 text-sm leading-6 text-gray-600"
-              >
-                {confirmation.decision === 'accepted'
-                  ? 'You are about to confirm this buyer’s pre-harvest request. Please ensure the quantity, price and collection location are correct.'
-                  : 'You are about to reject this buyer’s request. The booking will be marked as rejected and the buyer can see your response.'}
-              </p>
-
-              {confirmation.decision === 'accepted' && (
-                <div className="mt-5 rounded-2xl border border-emerald-100 bg-white/90 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Booking summary
-                  </p>
-
-                  <p className="mt-2 font-bold text-gray-900">
-                    {confirmation.booking.product?.crop_name ||
-                      'Pre-Harvest Product'}
-                  </p>
-
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-gray-500">Buyer</p>
-                      <p className="mt-1 text-sm font-medium text-gray-800">
-                        {confirmation.booking.buyer?.full_name || 'Buyer'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-gray-500">
-                        Confirmed quantity
-                      </p>
-                      <p className="mt-1 text-sm font-medium text-gray-800">
-                        {forms[confirmation.booking.id]?.quantity || '—'}{' '}
-                        {confirmation.booking.unit || ''}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-gray-500">Price per unit</p>
-                      <p className="mt-1 text-sm font-medium text-gray-800">
-                        {money(forms[confirmation.booking.id]?.price)}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-gray-500">Collection</p>
-                      <p className="mt-1 break-words text-sm font-medium text-gray-800">
-                        {forms[confirmation.booking.id]?.location ||
-                          'Not specified'}
-                      </p>
-                    </div>
-                  </div>
+                  {confirmation.decision === 'rejected' ? (
+                    <XCircle size={22} />
+                  ) : (
+                    <CheckCircle2 size={22} />
+                  )}
                 </div>
-              )}
 
-              {confirmation.decision === 'rejected' && (
-                <div className="mt-5 rounded-2xl border border-red-100 bg-white/90 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Booking
-                  </p>
-                  <p className="mt-1 font-bold text-gray-900">
-                    {confirmation.booking.product?.crop_name ||
-                      'Pre-Harvest Product'}
-                  </p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    Buyer: {confirmation.booking.buyer?.full_name || 'Buyer'}
-                  </p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    Requested quantity: {confirmation.booking.quantity}{' '}
-                    {confirmation.booking.unit || ''}
+                <div>
+                  <h2
+                    id="booking-confirmation-title"
+                    className="font-bold text-slate-900"
+                  >
+                    {confirmation.decision === 'rejected'
+                      ? 'Confirm rejection'
+                      : 'Confirm acceptance'}
+                  </h2>
+                  <p className="mt-0.5 text-sm text-slate-600">
+                    {confirmation.cropName}
                   </p>
                 </div>
-              )}
-            </div>
+              </div>
 
-            <div className="flex flex-col-reverse gap-3 border-t border-gray-100 bg-white p-5 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={() => setConfirmation(null)}
-                disabled={Boolean(submittingId)}
-                className="rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={submittingId !== null}
+                aria-label="Close confirmation"
+                className="rounded-lg p-2 text-slate-500 transition hover:bg-white/70 hover:text-slate-800 disabled:opacity-50"
               >
-                Go Back
+                <X size={19} />
               </button>
+            </div>
 
-              <button
-                type="button"
-                onClick={confirmResponse}
-                disabled={Boolean(submittingId)}
-                className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                  confirmation.decision === 'accepted'
-                    ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : 'bg-red-600 hover:bg-red-700'
-                }`}
-              >
-                {submittingId === confirmation.booking.id ? (
-                  <>
-                    <Loader2 size={17} className="animate-spin" />
-                    Processing...
-                  </>
-                ) : confirmation.decision === 'accepted' ? (
-                  <>
-                    <CheckCircle2 size={17} />
-                    Yes, Accept Booking
-                  </>
-                ) : (
-                  <>
-                    <XCircle size={17} />
-                    Yes, Reject Booking
-                  </>
-                )}
-              </button>
+            <div className="p-5">
+              <p className="text-sm leading-6 text-slate-600">
+                {confirmation.decision === 'rejected'
+                  ? 'Are you sure you want to reject this pre-harvest booking? The buyer will need to make other arrangements.'
+                  : 'Are you sure you want to accept this booking using the quantity, price and collection location you entered?'}
+              </p>
+
+              {confirmation.decision === 'accepted' && (
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  {(() => {
+                    const selectedBooking = bookings.find(
+                      (item) => item.id === confirmation.bookingId
+                    );
+                    const selectedForm =
+                      forms[confirmation.bookingId] || EMPTY_FORM;
+
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-4 text-sm">
+                          <span className="text-slate-500">Quantity</span>
+                          <span className="text-right font-semibold text-slate-900">
+                            {selectedForm.quantity}{' '}
+                            {selectedBooking?.unit ||
+                              selectedBooking?.product?.unit ||
+                              'units'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4 text-sm">
+                          <span className="text-slate-500">Price per unit</span>
+                          <span className="text-right font-semibold text-slate-900">
+                            {formatCurrency(selectedForm.price)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4 border-t border-slate-200 pt-3 text-sm">
+                          <span className="font-medium text-slate-600">
+                            Estimated total
+                          </span>
+                          <span className="text-right font-bold text-emerald-700">
+                            {formatCurrency(
+                              Number(selectedForm.quantity) *
+                                Number(selectedForm.price)
+                            )}
+                          </span>
+                        </div>
+
+                        <div className="border-t border-slate-200 pt-3 text-sm">
+                          <p className="text-slate-500">Collection location</p>
+                          <p className="mt-1 break-words font-semibold text-slate-900">
+                            {selectedForm.collectionLocation ||
+                              'Not specified'}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setConfirmation(null)}
+                  disabled={submittingId !== null}
+                  className="min-h-11 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Go back
+                </button>
+
+                <button
+                  type="button"
+                  onClick={submitResponse}
+                  disabled={submittingId !== null}
+                  className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    confirmation.decision === 'rejected'
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
+                >
+                  {submittingId !== null ? (
+                    <>
+                      <Loader2 size={17} className="animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      {confirmation.decision === 'rejected'
+                        ? 'Yes, reject booking'
+                        : 'Yes, accept booking'}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

@@ -1,336 +1,597 @@
 
-import { useEffect, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
-  UserRound,
-  Building2,
-  MapPin,
-  Mail,
-  ShieldCheck,
-  Clock3,
   AlertCircle,
+  BadgeCheck,
+  Building2,
   CheckCircle2,
-  Save,
-  RefreshCw,
-  Pencil,
-  X,
-  Sprout,
+  Clock3,
+  Info,
+  Loader2,
   LockKeyhole,
-} from "lucide-react";
-
+  MapPin,
+  Pencil,
+  Phone,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  UserRound,
+  X,
+} from 'lucide-react';
 import { supabase } from '../../config/supabaseClient';
-import { useAuth } from "../../context/AuthContext";
+import { useAuth } from '../../context/AuthContext';
 
-const KANO_LGAS = [
-  "Kano Central",
-  "Kano South",
-  "Kano West",
-  "Kano East",
-  "Kano North",
+const PROFILE_FIELDS =
+  'id, full_name, phone_number, role, lga_location, verification_status';
+
+const OPERATING_AREAS = [
+  'Kano Central',
+  'Kano South',
+  'Kano West',
+  'Kano East',
+  'Kano North',
 ];
 
-const VERIFICATION_CONFIG = {
+const VERIFICATION_STATES = {
   approved: {
-    label: "Verified aggregator",
-    description: "Your aggregator account is approved.",
-    icon: ShieldCheck,
-    classes: "bg-emerald-50 text-emerald-800 border-emerald-200",
+    label: 'Verified',
+    description: 'Your aggregator account has been approved.',
+    icon: BadgeCheck,
+    styles: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    dot: 'bg-emerald-500',
   },
   pending: {
-    label: "Verification pending",
-    description: "Your documents are awaiting review.",
+    label: 'Under review',
+    description:
+      'Your account is awaiting admin review. Some aggregator features may remain unavailable.',
     icon: Clock3,
-    classes: "bg-amber-50 text-amber-800 border-amber-200",
+    styles: 'border-amber-200 bg-amber-50 text-amber-800',
+    dot: 'bg-amber-500',
   },
   rejected: {
-    label: "Verification rejected",
-    description: "Your verification was rejected. Contact the administrator for guidance.",
+    label: 'Not approved',
+    description:
+      'Your verification was not approved. Contact AgroLink support or follow the instructions provided by the admin.',
     icon: AlertCircle,
-    classes: "bg-red-50 text-red-800 border-red-200",
+    styles: 'border-rose-200 bg-rose-50 text-rose-800',
+    dot: 'bg-rose-500',
   },
 };
 
-const EMPTY_PROFILE = {
-  full_name: "",
-  business_name: "",
-  farm_location: "",
-  lga_location: "",
+const normalizeProfile = (row) => ({
+  id: row?.id ?? '',
+  full_name: row?.full_name ?? '',
+  phone_number: row?.phone_number ?? '',
+  lga_location: row?.lga_location ?? '',
+  role: row?.role ?? '',
+  verification_status: String(
+    row?.verification_status ?? 'pending'
+  ).toLowerCase(),
+});
+
+const getErrorMessage = (error) => {
+  if (!error) return 'Something went wrong. Please try again.';
+
+  if (error.code === '42501') {
+    return 'You are not permitted to update this profile. Check your Supabase profile policies.';
+  }
+
+  if (error.code === '23505') {
+    return 'This information conflicts with an existing record.';
+  }
+
+  if (error.code === '23503') {
+    return 'This profile update references a record that does not exist.';
+  }
+
+  if (error.code === 'PGRST116') {
+    return 'Your profile could not be found. Please sign in again or contact the administrator.';
+  }
+
+  return error.message || 'Something went wrong. Please try again.';
 };
 
-function Field({ label, icon: Icon, children, hint }) {
-  return (
-    <div>
-      <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
-        {Icon && <Icon size={16} className="text-gray-400" />}
-        {label}
-      </label>
-      {children}
-      {hint && <p className="mt-1.5 text-xs leading-5 text-gray-500">{hint}</p>}
-    </div>
-  );
-}
+const inputClass =
+  'mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 disabled:cursor-not-allowed disabled:bg-slate-50';
 
-function ReadOnlyField({ label, value, icon: Icon }) {
+const labelClass = 'text-sm font-semibold text-slate-700';
+
+function SectionHeading({ icon: Icon, title, description }) {
   return (
-    <div>
-      <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
-        {Icon && <Icon size={16} className="text-gray-400" />}
-        {label}
-      </p>
-      <div className="flex min-h-11 items-center rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-3 text-sm text-gray-700">
-        <span className="break-all">
-          {value || "Not provided"}
-        </span>
+    <div className="flex items-start gap-3">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+        <Icon size={19} />
+      </div>
+      <div>
+        <h2 className="font-bold text-slate-900">{title}</h2>
+        {description && (
+          <p className="mt-1 text-sm leading-6 text-slate-500">
+            {description}
+          </p>
+        )}
       </div>
     </div>
   );
 }
 
-function StatusPanel({ status }) {
-  const normalizedStatus = String(status || "pending").toLowerCase();
-  const config =
-    VERIFICATION_CONFIG[normalizedStatus] || VERIFICATION_CONFIG.pending;
-  const Icon = config.icon;
+function Notice({ type = 'info', children }) {
+  const styles = {
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    error: 'border-rose-200 bg-rose-50 text-rose-800',
+    info: 'border-sky-200 bg-sky-50 text-sky-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-800',
+  };
+
+  const Icon =
+    type === 'success'
+      ? CheckCircle2
+      : type === 'error'
+        ? AlertCircle
+        : type === 'warning'
+          ? Clock3
+          : Info;
 
   return (
-    <div className={`rounded-2xl border p-4 ${config.classes}`}>
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5">
-          <Icon size={23} />
-        </div>
-        <div>
-          <p className="font-bold">{config.label}</p>
-          <p className="mt-1 text-sm leading-6">{config.description}</p>
-        </div>
-      </div>
+    <div
+      role={type === 'error' ? 'alert' : 'status'}
+      className={`flex items-start gap-3 rounded-xl border p-4 text-sm leading-6 ${styles[type]}`}
+    >
+      <Icon size={19} className="mt-0.5 shrink-0" />
+      <div>{children}</div>
     </div>
   );
 }
 
 export default function AggregatorProfile() {
-  const { user, userProfile, isLoading: authLoading } = useAuth();
+  const {
+    user,
+    userProfile,
+    isLoading: authLoading,
+    updateUserProfile,
+  } = useAuth();
 
-  const [profile, setProfile] = useState(EMPTY_PROFILE);
-  const [originalProfile, setOriginalProfile] = useState(EMPTY_PROFILE);
-  const [verificationStatus, setVerificationStatus] = useState("pending");
+  const [profile, setProfile] = useState(null);
+
+  const [form, setForm] = useState({
+    full_name: '',
+    phone_number: '',
+    lga_location: '',
+  });
 
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  // Refs let asynchronous requests and realtime callbacks read the
+  // latest state without recreating subscriptions on every render.
+  const editingRef = useRef(editing);
+  const savingRef = useRef(saving);
+  const requestIdRef = useRef(0);
 
+  editingRef.current = editing;
+  savingRef.current = saving;
+
+  const verificationStatus = String(
+    profile?.verification_status ??
+      userProfile?.verification_status ??
+      'pending'
+  ).toLowerCase();
+
+  const verification =
+    VERIFICATION_STATES[verificationStatus] ??
+    VERIFICATION_STATES.pending;
+
+  const VerificationIcon = verification.icon;
+
+  const hasChanges = useMemo(() => {
+    if (!profile) return false;
+
+    return (
+      form.full_name.trim() !== profile.full_name ||
+      form.phone_number.trim() !== profile.phone_number ||
+      form.lga_location.trim() !== profile.lga_location
+    );
+  }, [form, profile]);
+
+  const syncProfile = useCallback((row) => {
+    const normalized = normalizeProfile(row);
+
+    setProfile(normalized);
+
+    // Never overwrite a form that the aggregator is currently editing
+    // or saving.
+    if (!editingRef.current && !savingRef.current) {
+      setForm({
+        full_name: normalized.full_name,
+        phone_number: normalized.phone_number,
+        lga_location: normalized.lga_location,
+      });
+    }
+
+    return normalized;
+  }, []);
+
+  const loadProfile = useCallback(
+    async ({ isRefresh = false } = {}) => {
+      if (!user?.id) {
+        setProfile(null);
+        setLoading(false);
+        setRefreshing(false);
+        setError(
+          'Your session could not be identified. Please sign in again.'
+        );
+        return;
+      }
+
+      const requestId = ++requestIdRef.current;
+
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      setError('');
+
+      try {
+        const { data, error: queryError } = await supabase
+          .from('profiles')
+          .select(PROFILE_FIELDS)
+          .eq('id', user.id)
+          .maybeSingle();
+
+        // Ignore a response from an older request.
+        if (requestId !== requestIdRef.current) return;
+
+        if (queryError) throw queryError;
+
+        if (!data) {
+          setProfile(null);
+          setError(
+            'Your AgroLink profile was not found. Sign out and sign in again. If the problem continues, contact the administrator.'
+          );
+          return;
+        }
+
+        if (data.role !== 'aggregator') {
+          setProfile(data);
+          setError(
+            'This page is intended for aggregator accounts. Your account role does not currently match.'
+          );
+          return;
+        }
+
+        syncProfile(data);
+      } catch (err) {
+        if (requestId !== requestIdRef.current) return;
+
+        console.error('Aggregator profile load failed:', err);
+        setError(getErrorMessage(err));
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [user?.id, syncProfile]
+  );
+
+  // Load the profile after authentication has finished.
   useEffect(() => {
     if (authLoading) return;
 
-    if (!user?.id) {
-      setError("Please sign in to view your aggregator profile.");
-      setLoading(false);
-      return;
-    }
-
     loadProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, authLoading]);
 
-  async function loadProfile() {
-    if (!user?.id) return;
+    return () => {
+      // Invalidate any outstanding request when the user changes or
+      // the component unmounts.
+      requestIdRef.current += 1;
+    };
+  }, [authLoading, loadProfile]);
 
-    setError("");
-    setSuccess("");
-    setLoading(true);
+  // Subscribe directly to the signed-in aggregator's profile.
+  // Admin verification decisions and profile changes can then appear
+  // without requiring a manual refresh.
+  useEffect(() => {
+    if (authLoading || !user?.id) return;
 
-    try {
-      const { data, error: profileError } = await supabase
-        .from("profiles")
-        .select(
-          "id,full_name,business_name,farm_location,lga_location,role,verification_status"
-        )
-        .eq("id", user.id)
-        .maybeSingle();
+    let active = true;
 
-      if (profileError) throw profileError;
+    const channel = supabase
+      .channel(`aggregator-profile-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${user.id}`,
+        },
+        (payload) => {
+          if (!active) return;
 
-      if (!data) {
-        throw new Error(
-          "Your profile record could not be found. Please contact the administrator."
-        );
-      }
+          if (payload.eventType === 'DELETE') {
+            setProfile(null);
+            setError(
+              'Your AgroLink profile is no longer available. Please contact the administrator.'
+            );
+            return;
+          }
 
-      if (data.role !== "aggregator") {
-        throw new Error(
-          "This page is available to aggregator accounts only."
-        );
-      }
+          const row = payload.new;
 
-      const nextProfile = {
-        full_name: data.full_name || "",
-        business_name: data.business_name || "",
-        farm_location: data.farm_location || "",
-        lga_location: data.lga_location || "",
-      };
+          if (!row?.id) return;
 
-      setProfile(nextProfile);
-      setOriginalProfile(nextProfile);
-      setVerificationStatus(data.verification_status || "pending");
-    } catch (loadError) {
-      console.error("Error loading aggregator profile:", loadError);
-      setError(
-        loadError?.message || "Unable to load your profile. Please try again."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
+          if (row.role !== 'aggregator') {
+            setProfile(row);
+            setError(
+              'This page is intended for aggregator accounts. Your account role does not currently match.'
+            );
+            return;
+          }
 
-  function updateField(field, value) {
-    setProfile((current) => ({
+          setError('');
+          syncProfile(row);
+        }
+      )
+      .subscribe((status) => {
+        if (
+          active &&
+          status === 'CHANNEL_ERROR'
+        ) {
+          console.error(
+            'Aggregator profile realtime subscription failed. Check Supabase Realtime configuration and profile access policies.'
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
+  }, [authLoading, user?.id, syncProfile]);
+
+  /*
+   * Keep this page aligned with AuthContext updates initiated by
+   * other parts of AgroLink. Do not replace active form edits.
+   */
+  useEffect(() => {
+    if (!userProfile || userProfile.id !== user?.id) return;
+
+    if (userProfile.role !== 'aggregator') return;
+
+    syncProfile(userProfile);
+  }, [userProfile, user?.id, syncProfile]);
+
+  const handleFieldChange = (event) => {
+    const { name, value } = event.target;
+
+    setForm((current) => ({
       ...current,
-      [field]: value,
+      [name]: value,
     }));
 
-    setError("");
-    setSuccess("");
-  }
+    setError('');
+    setSuccess('');
+  };
 
-  function cancelEditing() {
-    setProfile(originalProfile);
+  const handleCancel = () => {
+    if (profile) {
+      setForm({
+        full_name: profile.full_name,
+        phone_number: profile.phone_number,
+        lga_location: profile.lga_location,
+      });
+    }
+
     setEditing(false);
-    setError("");
-    setSuccess("");
-  }
+    setError('');
+    setSuccess('');
+  };
 
-  async function handleSave(event) {
+  const handleSave = async (event) => {
     event.preventDefault();
 
-    if (!user?.id) {
-      setError("Your session has expired. Please sign in again.");
+    if (!user?.id || !profile) {
+      setError(
+        'Your profile is unavailable. Refresh the page and try again.'
+      );
       return;
     }
 
-    const fullName = profile.full_name.trim();
-    const businessName = profile.business_name.trim();
-    const farmLocation = profile.farm_location.trim();
-    const lgaLocation = profile.lga_location.trim();
+    if (profile.role !== 'aggregator') {
+      setError(
+        'Your account is not authorized to edit an aggregator profile.'
+      );
+      return;
+    }
+
+    const fullName = form.full_name.trim();
+    const phoneNumber = form.phone_number.trim();
+    const lgaLocation = form.lga_location.trim();
 
     if (!fullName) {
-      setError("Please enter your full name.");
+      setError('Please enter your full name.');
       return;
     }
 
-    if (!businessName) {
-      setError("Please enter your business or trading name.");
+    if (fullName.length > 120) {
+      setError('Your full name must not exceed 120 characters.');
       return;
     }
 
-    if (!farmLocation) {
-      setError("Please enter your office or business address.");
+    if (phoneNumber.length > 30) {
+      setError('Please enter a valid phone number.');
       return;
     }
 
     if (!lgaLocation) {
-      setError("Please select your LGA area.");
+      setError('Please select your operating area.');
+      return;
+    }
+
+    if (!OPERATING_AREAS.includes(lgaLocation) &&
+        lgaLocation !== profile.lga_location) {
+      setError('Please select a valid operating area.');
+      return;
+    }
+
+    if (!hasChanges) {
+      setSuccess('Your profile is already up to date.');
+      setEditing(false);
       return;
     }
 
     setSaving(true);
-    setError("");
-    setSuccess("");
+    setError('');
+    setSuccess('');
+
+    const updates = {
+      full_name: fullName,
+      phone_number: phoneNumber || null,
+      lga_location: lgaLocation,
+    };
 
     try {
-      // Only update editable profile fields. Never allow this form
-      // to change the user's role or verification status.
-      const updates = {
-        full_name: fullName,
-        business_name: businessName,
-        farm_location: farmLocation,
-        lga_location: lgaLocation,
-      };
-
       const { data, error: updateError } = await supabase
-        .from("profiles")
+        .from('profiles')
         .update(updates)
-        .eq("id", user.id)
-        .select(
-          "id,full_name,business_name,farm_location,lga_location,role,verification_status"
-        )
+        .eq('id', user.id)
+        .eq('role', 'aggregator')
+        .select(PROFILE_FIELDS)
         .maybeSingle();
 
       if (updateError) throw updateError;
 
       if (!data) {
         throw new Error(
-          "The profile was not updated. Check your profile update permissions or contact the administrator."
+          'No profile was updated. Check that your profile exists and that your Supabase UPDATE and SELECT policies allow you to access your own profile.'
         );
       }
 
-      if (data.role !== "aggregator") {
+      if (data.role !== 'aggregator') {
         throw new Error(
-          "Your account role changed. Please refresh your session or contact the administrator."
+          'The returned profile is not an aggregator profile. Please contact the administrator.'
         );
       }
 
-      const savedProfile = {
-        full_name: data.full_name || "",
-        business_name: data.business_name || "",
-        farm_location: data.farm_location || "",
-        lga_location: data.lga_location || "",
-      };
+      const normalized = normalizeProfile(data);
 
-      setProfile(savedProfile);
-      setOriginalProfile(savedProfile);
-      setVerificationStatus(data.verification_status || "pending");
+      // Update the database-backed page state.
+      setProfile(normalized);
+      setForm({
+        full_name: normalized.full_name,
+        phone_number: normalized.phone_number,
+        lga_location: normalized.lga_location,
+      });
+
+      // Keep shared authentication state in sync with the saved profile.
+      if (typeof updateUserProfile === 'function') {
+        updateUserProfile(data);
+      } else {
+        console.error(
+          'updateUserProfile is missing from AuthContext. The database was updated, but shared profile state may not refresh immediately.'
+        );
+      }
+
       setEditing(false);
-      setSuccess("Your profile has been updated successfully.");
-    } catch (saveError) {
-      console.error("Error saving aggregator profile:", saveError);
-      setError(
-        saveError?.message ||
-          "Unable to save your profile. Please try again."
-      );
+      setSuccess('Your profile has been updated successfully.');
+    } catch (err) {
+      console.error('Aggregator profile update failed:', err);
+      setError(getErrorMessage(err));
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  function handleRefresh() {
-    setRefreshing(true);
-    loadProfile();
-  }
+  const handleRefresh = () => {
+    if (refreshing || saving) return;
+
+    loadProfile({ isRefresh: true });
+  };
 
   if (authLoading || loading) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center px-4">
+      <div className="flex min-h-[60vh] items-center justify-center bg-slate-50 px-4">
         <div className="text-center">
-          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-emerald-100 border-t-emerald-700" />
-          <p className="mt-4 text-sm text-gray-500">
-            Loading your aggregator profile...
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+            <Loader2 size={27} className="animate-spin" />
+          </div>
+          <h2 className="mt-5 font-bold text-slate-900">
+            Loading your profile
+          </h2>
+          <p className="mt-2 text-sm text-slate-500">
+            Please wait while AgroLink retrieves your information.
           </p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50/70 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-5xl">
-        {/* Header */}
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700">
-              <UserRound size={17} />
-              Aggregator workspace
-            </div>
+  if (!profile) {
+    return (
+      <main className="min-h-[60vh] bg-slate-50 px-4 py-12 sm:px-6">
+        <div className="mx-auto max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
+            <AlertCircle size={27} />
+          </div>
+          <h1 className="mt-5 text-xl font-bold text-slate-900">
+            Profile unavailable
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {error || 'AgroLink could not load your profile.'}
+          </p>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-60"
+          >
+            {refreshing ? (
+              <Loader2 size={17} className="animate-spin" />
+            ) : (
+              <RefreshCw size={17} />
+            )}
+            Try again
+          </button>
+        </div>
+      </main>
+    );
+  }
 
-            <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
+  const initials =
+    profile.full_name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0].toUpperCase())
+      .join('') || 'AG';
+
+  return (
+    <main className="min-h-screen bg-slate-50 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+      <div className="mx-auto max-w-5xl space-y-6">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium text-emerald-700">
+              <Building2 size={16} />
+              AgroLink Aggregator Portal
+            </div>
+            <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-slate-950 sm:text-3xl">
               My profile
             </h1>
-
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
-              Manage your business information and review your account
-              verification status.
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 sm:text-base">
+              Keep your contact information and operating area accurate so
+              AgroLink can coordinate your aggregator activities.
             </p>
           </div>
 
@@ -338,323 +599,304 @@ export default function AggregatorProfile() {
             type="button"
             onClick={handleRefresh}
             disabled={refreshing || saving}
-            className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-60 sm:self-auto"
+            className="inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
           >
-            <RefreshCw
-              size={16}
-              className={refreshing ? "animate-spin" : ""}
-            />
+            {refreshing ? (
+              <Loader2 size={17} className="animate-spin" />
+            ) : (
+              <RefreshCw size={17} />
+            )}
             Refresh
           </button>
-        </div>
+        </header>
 
-        {/* Error */}
-        {error && (
-          <div
-            role="alert"
-            className="mt-6 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800"
-          >
-            <AlertCircle size={20} className="mt-0.5 shrink-0" />
-            <p className="break-words text-sm leading-6">{error}</p>
-          </div>
-        )}
+        {error && <Notice type="error">{error}</Notice>}
+        {success && <Notice type="success">{success}</Notice>}
 
-        {/* Success */}
-        {success && (
-          <div
-            role="status"
-            className="mt-6 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800"
-          >
-            <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
-            <p className="text-sm leading-6">{success}</p>
-          </div>
-        )}
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="h-2 bg-gradient-to-r from-emerald-700 via-emerald-500 to-lime-400" />
 
-        <div className="mt-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-          {/* Main profile card */}
-          <section className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-            <div className="flex flex-col justify-between gap-4 border-b border-gray-100 p-5 sm:flex-row sm:items-center sm:p-6">
-              <div className="flex items-center gap-4">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-800">
-                  <UserRound size={28} />
+          <div className="p-5 sm:p-8">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-4">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 text-xl font-extrabold text-emerald-800 ring-4 ring-emerald-50 sm:h-20 sm:w-20 sm:text-2xl">
+                  {initials}
                 </div>
 
                 <div className="min-w-0">
-                  <h2 className="text-lg font-bold text-gray-900">
-                    Business information
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                    Aggregator account
+                  </p>
+                  <h2 className="mt-1 break-words text-xl font-extrabold text-slate-950 sm:text-2xl">
+                    {profile.full_name || 'Name not provided'}
                   </h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Keep your contact and business details current.
+                  <p className="mt-1 break-all text-sm text-slate-500">
+                    {user?.email || 'Email is managed by your sign-in account'}
                   </p>
                 </div>
               </div>
 
-              {!editing && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setError("");
-                    setSuccess("");
-                    setEditing(true);
-                  }}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-50"
-                >
-                  <Pencil size={16} />
-                  Edit profile
-                </button>
-              )}
+              <div
+                className={`inline-flex w-fit items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-bold ${verification.styles}`}
+              >
+                <span className={`h-2 w-2 rounded-full ${verification.dot}`} />
+                <VerificationIcon size={17} />
+                {verification.label}
+              </div>
             </div>
 
-            <form onSubmit={handleSave} className="space-y-6 p-5 sm:p-6">
-              <div className="grid gap-5 sm:grid-cols-2">
-                <Field label="Full name" icon={UserRound}>
-                  <input
-                    type="text"
-                    value={profile.full_name}
-                    onChange={(event) =>
-                      updateField("full_name", event.target.value)
-                    }
-                    disabled={!editing || saving}
-                    required
-                    maxLength={120}
-                    autoComplete="name"
-                    placeholder="Enter your full name"
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50 disabled:text-gray-600"
-                  />
-                </Field>
-
-                <Field label="Business / trading name" icon={Building2}>
-                  <input
-                    type="text"
-                    value={profile.business_name}
-                    onChange={(event) =>
-                      updateField("business_name", event.target.value)
-                    }
-                    disabled={!editing || saving}
-                    required
-                    maxLength={150}
-                    autoComplete="organization"
-                    placeholder="Enter your business name"
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50 disabled:text-gray-600"
-                  />
-                </Field>
-
-                <div className="sm:col-span-2">
-                  <Field
-                    label="Office / business address"
-                    icon={MapPin}
-                    hint="Enter the location where you coordinate produce collection and farmer relationships."
-                  >
-                    <textarea
-                      value={profile.farm_location}
-                      onChange={(event) =>
-                        updateField("farm_location", event.target.value)
-                      }
-                      disabled={!editing || saving}
-                      required
-                      maxLength={300}
-                      rows={3}
-                      autoComplete="street-address"
-                      placeholder="Enter your office or business address"
-                      className="w-full resize-y rounded-xl border border-gray-200 bg-white px-3.5 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50 disabled:text-gray-600"
-                    />
-                  </Field>
+            <div className={`mt-6 rounded-2xl border p-4 ${verification.styles}`}>
+              <div className="flex items-start gap-3">
+                <VerificationIcon size={21} className="mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-bold">{verification.label}</p>
+                  <p className="mt-1 text-sm leading-6">
+                    {verification.description}
+                  </p>
                 </div>
+              </div>
+            </div>
 
-                <Field
-                  label="LGA / operating area"
-                  icon={MapPin}
-                  hint="Choose the operating area recorded in your profile."
-                >
-                  <select
-                    value={profile.lga_location}
-                    onChange={(event) =>
-                      updateField("lga_location", event.target.value)
-                    }
-                    disabled={!editing || saving}
+            {verificationStatus !== 'approved' && (
+              <div className="mt-4">
+                <Notice type="warning">
+                  Your verification status is controlled by AgroLink
+                  administrators. Editing your profile will not approve your
+                  account or unlock restricted aggregator operations.
+                </Notice>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <SectionHeading
+              icon={UserRound}
+              title="Personal and contact information"
+              description="Review your details and update any information that has changed."
+            />
+
+            {!editing && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setSuccess('');
+                  setEditing(true);
+                }}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-800 transition hover:bg-emerald-100"
+              >
+                <Pencil size={16} />
+                Edit profile
+              </button>
+            )}
+          </div>
+
+          <form onSubmit={handleSave} className="mt-7 space-y-6">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div>
+                <label htmlFor="full_name" className={labelClass}>
+                  Full name <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <UserRound
+                    size={17}
+                    className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <input
+                    id="full_name"
+                    name="full_name"
+                    type="text"
+                    autoComplete="name"
+                    maxLength={120}
                     required
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-3 text-sm text-gray-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50 disabled:text-gray-600"
+                    value={form.full_name}
+                    onChange={handleFieldChange}
+                    disabled={!editing || saving}
+                    placeholder="Enter your full name"
+                    className={`${inputClass} pl-10`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="phone_number" className={labelClass}>
+                  Phone number
+                </label>
+                <div className="relative">
+                  <Phone
+                    size={17}
+                    className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <input
+                    id="phone_number"
+                    name="phone_number"
+                    type="tel"
+                    autoComplete="tel"
+                    maxLength={30}
+                    value={form.phone_number}
+                    onChange={handleFieldChange}
+                    disabled={!editing || saving}
+                    placeholder="Enter your contact number"
+                    className={`${inputClass} pl-10`}
+                  />
+                </div>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Use a number where farmers and AgroLink can reach you.
+                </p>
+              </div>
+
+              <div className="md:col-span-2">
+                <label htmlFor="lga_location" className={labelClass}>
+                  Operating area <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <MapPin
+                    size={17}
+                    className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <select
+                    id="lga_location"
+                    name="lga_location"
+                    required
+                    value={form.lga_location}
+                    onChange={handleFieldChange}
+                    disabled={!editing || saving}
+                    className={`${inputClass} appearance-none pl-10`}
                   >
-                    <option value="">Select operating area</option>
-                    {KANO_LGAS.map((area) => (
+                    <option value="" disabled>
+                      Select your operating area
+                    </option>
+
+                    {form.lga_location &&
+                      !OPERATING_AREAS.includes(form.lga_location) && (
+                        <option value={form.lga_location}>
+                          {form.lga_location} (current value)
+                        </option>
+                      )}
+
+                    {OPERATING_AREAS.map((area) => (
                       <option key={area} value={area}>
                         {area}
                       </option>
                     ))}
-                    {profile.lga_location &&
-                      !KANO_LGAS.includes(profile.lga_location) && (
-                        <option value={profile.lga_location}>
-                          {profile.lga_location}
-                        </option>
-                      )}
                   </select>
-                </Field>
-
-                <ReadOnlyField
-                  label="Email address"
-                  value={user?.email}
-                  icon={Mail}
-                />
-              </div>
-
-              <div className="border-t border-gray-100 pt-5">
-                <div className="flex items-start gap-3 rounded-xl bg-gray-50 p-4">
-                  <LockKeyhole
-                    size={19}
-                    className="mt-0.5 shrink-0 text-gray-500"
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">
-                      Account security
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-gray-500">
-                      Your email, account role and verification status cannot
-                      be changed from this form. Role changes and verification
-                      decisions must go through the appropriate AgroLink
-                      workflow.
-                    </p>
-                  </div>
                 </div>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Select the area where you coordinate farmers. Your current
+                  value is preserved if it is not in the available options.
+                </p>
               </div>
+            </div>
 
-              {editing && (
-                <div className="flex flex-col-reverse gap-3 border-t border-gray-100 pt-5 sm:flex-row sm:justify-end">
-                  <button
-                    type="button"
-                    onClick={cancelEditing}
-                    disabled={saving}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
-                  >
-                    <X size={16} />
-                    Cancel
-                  </button>
+            {editing && (
+              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={saving}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                >
+                  <X size={17} />
+                  Cancel
+                </button>
 
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {saving ? (
-                      <>
-                        <RefreshCw size={16} className="animate-spin" />
-                        Saving changes...
-                      </>
-                    ) : (
-                      <>
-                        <Save size={16} />
-                        Save changes
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-            </form>
-          </section>
+                <button
+                  type="submit"
+                  disabled={saving || !hasChanges}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? (
+                    <Loader2 size={17} className="animate-spin" />
+                  ) : (
+                    <Save size={17} />
+                  )}
+                  {saving ? 'Saving changes...' : 'Save changes'}
+                </button>
+              </div>
+            )}
 
-          {/* Sidebar */}
-          <aside className="space-y-5">
-            <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={20} className="text-emerald-700" />
-                <h2 className="font-bold text-gray-900">
+            {!editing && (
+              <div className="flex items-start gap-2 border-t border-slate-100 pt-5 text-xs leading-5 text-slate-500">
+                <LockKeyhole size={15} className="mt-0.5 shrink-0" />
+                Your role and verification status cannot be changed from this
+                form.
+              </div>
+            )}
+          </form>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+          <SectionHeading
+            icon={ShieldCheck}
+            title="Account and verification"
+            description="Important information about your AgroLink account permissions."
+          />
+
+          <div className="mt-6 divide-y divide-slate-100 rounded-2xl border border-slate-100">
+            <div className="flex items-start gap-3 p-4 sm:p-5">
+              <div className="rounded-xl bg-slate-100 p-2.5 text-slate-600">
+                <Building2 size={19} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
+                  Account role
+                </p>
+                <p className="mt-1 text-sm text-slate-500">Aggregator</p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">
+                  Role changes must follow AgroLink’s authorized approval
+                  process.
+                </p>
+              </div>
+              <LockKeyhole size={17} className="mt-1 shrink-0 text-slate-400" />
+            </div>
+
+            <div className="flex items-start gap-3 p-4 sm:p-5">
+              <div className="rounded-xl bg-slate-100 p-2.5 text-slate-600">
+                <ShieldCheck size={19} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
                   Verification status
-                </h2>
-              </div>
-
-              <div className="mt-4">
-                <StatusPanel status={verificationStatus} />
-              </div>
-
-              <p className="mt-4 text-xs leading-5 text-gray-500">
-                Only an authorized administrator can approve or reject your
-                aggregator verification.
-              </p>
-            </section>
-
-            <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2">
-                <Sprout size={20} className="text-emerald-700" />
-                <h2 className="font-bold text-gray-900">
-                  Your role
-                </h2>
-              </div>
-
-              <div className="mt-4 rounded-xl bg-emerald-50 p-4">
-                <p className="font-semibold text-emerald-900">
-                  AgroLink Aggregator
                 </p>
-                <p className="mt-1 text-sm leading-6 text-emerald-800">
-                  Coordinate with farmers and help connect agricultural
-                  produce with buyers.
+                <p className="mt-1 text-sm text-slate-500">
+                  {verification.label}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">
+                  Only an authorized administrator can change this status.
                 </p>
               </div>
-            </section>
+              <LockKeyhole size={17} className="mt-1 shrink-0 text-slate-400" />
+            </div>
 
-            <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2">
-                <Building2 size={20} className="text-gray-500" />
-                <h2 className="font-bold text-gray-900">
-                  Profile checklist
-                </h2>
+            <div className="flex items-start gap-3 p-4 sm:p-5">
+              <div className="rounded-xl bg-slate-100 p-2.5 text-slate-600">
+                <Phone size={19} />
               </div>
-
-              <div className="mt-4 space-y-3">
-                {[
-                  {
-                    label: "Full name",
-                    complete: Boolean(profile.full_name.trim()),
-                  },
-                  {
-                    label: "Business name",
-                    complete: Boolean(profile.business_name.trim()),
-                  },
-                  {
-                    label: "Business address",
-                    complete: Boolean(profile.farm_location.trim()),
-                  },
-                  {
-                    label: "Operating area",
-                    complete: Boolean(profile.lga_location.trim()),
-                  },
-                  {
-                    label: "Email address",
-                    complete: Boolean(user?.email),
-                  },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <span className="text-sm text-gray-600">
-                      {item.label}
-                    </span>
-                    {item.complete ? (
-                      <CheckCircle2
-                        size={17}
-                        className="shrink-0 text-emerald-600"
-                      />
-                    ) : (
-                      <AlertCircle
-                        size={17}
-                        className="shrink-0 text-amber-500"
-                      />
-                    )}
-                  </div>
-                ))}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
+                  Contact information
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {profile.phone_number || 'No phone number added'}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">
+                  Keep your phone number up to date for account-related
+                  communication.
+                </p>
               </div>
+            </div>
+          </div>
+        </section>
 
-              <p className="mt-4 border-t border-gray-100 pt-4 text-xs leading-5 text-gray-500">
-                This checklist checks profile fields only. It does not confirm
-                that your verification documents have been approved.
-              </p>
-            </section>
-          </aside>
-        </div>
-
-        <p className="mt-6 text-center text-xs leading-5 text-gray-400">
-          AgroLink · Aggregator account settings
-        </p>
+        <footer className="flex flex-col gap-2 border-t border-slate-200 px-1 pt-4 text-xs leading-5 text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+          <span>AgroLink · Aggregator profile</span>
+          <span>
+            Your account information is managed securely through AgroLink.
+          </span>
+        </footer>
       </div>
-    </div>
+    </main>
   );
 }
