@@ -295,7 +295,7 @@ const PreHarvestBookingModal = ({
         );
       }
 
-      // Avoid silently submitting a request based on a price that changed
+      // to avoid silently submitting a request based on a price that changed
       // while the buyer was filling out the form.
       if (latestPrice !== pricePerUnit) {
         throw new Error(
@@ -308,7 +308,7 @@ const PreHarvestBookingModal = ({
       const cleanedLocation = collectionLocation.trim();
 
       // collection_location is an existing preharvest_bookings field.
-      // The buyer's requested pickup location must be saved explicitly.
+      // The buyer's requested pickup location is saved explicitly.
       const bookingPayload = {
         buyer_id: authenticatedUser.id,
         product_id: latestProduct.id,

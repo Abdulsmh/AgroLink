@@ -1279,7 +1279,7 @@ const OrderDetailsModal = ({
 
                 <p className="mt-2 text-[11px] leading-5 text-slate-400">
                   This is the original location recorded with the order.
-                  Pickup arrangements are stored separately.
+                  Pickup arrangements are performed separately.
                 </p>
               </div>
             </div>

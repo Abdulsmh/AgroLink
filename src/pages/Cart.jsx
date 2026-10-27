@@ -990,7 +990,7 @@ export const Cart = () => {
                   <div className="flex gap-2">
                     <Package className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                     <p className="text-[9px] leading-4 text-slate-500">
-                      Your cart is saved on this device. Prices and stock
+                      Your cart is saved. Prices and stock
                       are checked again during checkout.
                     </p>
                   </div>

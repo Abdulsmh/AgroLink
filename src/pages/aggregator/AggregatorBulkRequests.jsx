@@ -447,7 +447,7 @@ export default function AggregatorBulkRequests() {
 
         if (itemsResult.error || buyersResult.error) {
           setError(
-            'Requests loaded, but some item or buyer details could not be loaded. Check Supabase SELECT policies and refresh.'
+            'Requests loaded, but some item or buyer details could not be loaded.'
           );
         }
       } catch (loadError) {
@@ -1896,7 +1896,7 @@ export default function AggregatorBulkRequests() {
                   reject: {
                     title: 'Reject bulk request',
                     description:
-                      'Explain why you cannot fulfil this request. Your reason will be saved and displayed to the buyer.',
+                      'Explain why you cannot fulfil this request. Your reason will be sent to the buyer.',
                     nextStatus: 'rejected',
                     button: 'Reject request',
                     buttonClass: 'bg-rose-600 hover:bg-rose-700',

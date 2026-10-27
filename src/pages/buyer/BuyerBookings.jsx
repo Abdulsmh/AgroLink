@@ -632,7 +632,7 @@ const BuyerBookings = () => {
             <p className="mt-1 text-sm leading-6 text-blue-800">
               Agree on the final price and collection arrangements before
               paying the producer or authorized aggregator directly. AgroLink
-              does not process payment through this booking page.
+              does not process payment through this booking page, payment is carried out off the platform.
             </p>
           </div>
         </div>
@@ -1264,7 +1264,7 @@ const BuyerBookings = () => {
                                 Arrange payment directly with the seller
                                 outside AgroLink. Confirm the agreed amount,
                                 collection date, location, and contact details
-                                before travelling or paying.
+                                before going to for the pickup.
                               </p>
                             </div>
                           </div>

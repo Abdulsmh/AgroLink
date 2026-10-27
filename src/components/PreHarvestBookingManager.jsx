@@ -440,7 +440,7 @@ export function PreHarvestBookingManager({ role }) {
 
         if (missingBuyerProfiles.length > 0) {
           console.warn(
-            'Some booking buyer profiles were not returned by Supabase. Check profiles SELECT RLS and the corresponding profile IDs.',
+            'Some booking buyer profiles were not returned, kindly contact support',
             missingBuyerProfiles
           );
         }
