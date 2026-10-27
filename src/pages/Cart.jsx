@@ -1,4 +1,3 @@
-
 import React, {
   useCallback,
   useEffect,
@@ -6,6 +5,7 @@ import React, {
   useState,
 } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import {
   ArrowLeft,
   ArrowRight,
@@ -23,6 +23,7 @@ import {
 
 const CART_STORAGE_KEY = 'agrolink_cart';
 const CART_UPDATED_EVENT = 'agrolink-cart-updated';
+const CART_PAGE_SOURCE = 'cart-page';
 
 const formatNumber = (value) =>
   new Intl.NumberFormat('en-NG', {
@@ -57,7 +58,6 @@ const getAvailableQuantity = (item) => {
     }
   }
 
-  // null means the current stock is not known.
   return null;
 };
 
@@ -151,9 +151,6 @@ const normalizeCartItem = (item) => {
       ? rawQuantity
       : 1;
 
-  // Clamp quantity only when positive stock is known.
-  // Preserve the item when stock is zero so the buyer
-  // can see and remove it.
   if (availableQuantity !== null && availableQuantity > 0) {
     quantity = Math.min(quantity, availableQuantity);
   }
@@ -211,15 +208,19 @@ const readCartFromStorage = () => {
   }
 };
 
-const saveCartToStorage = (items) => {
+const saveCartToStorage = (items, source = null) => {
   try {
     localStorage.setItem(
       CART_STORAGE_KEY,
       JSON.stringify(items)
     );
 
+    // Notify other components without forcing this Cart
+    // component to read its own state back from storage.
     window.dispatchEvent(
-      new Event(CART_UPDATED_EVENT)
+      new CustomEvent(CART_UPDATED_EVENT, {
+        detail: { source },
+      })
     );
 
     return true;
@@ -243,7 +244,7 @@ const ProductImage = ({ imagePath, title }) => {
         src={imageUrl}
         alt={title || 'Agricultural produce'}
         loading="lazy"
-        className="h-full w-full object-cover transition duration-500 hover:scale-105"
+        className="h-full w-full object-cover transition duration-300 hover:scale-105"
         onError={() => setHasError(true)}
       />
     );
@@ -279,7 +280,7 @@ const EmptyCart = () => (
 
       <Link
         to="/catalog"
-        className="mt-7 inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-black text-white shadow-lg shadow-emerald-600/20 transition hover:-translate-y-0.5 hover:bg-emerald-500"
+        className="mt-7 inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-black text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-500"
       >
         <ShoppingBag className="h-4 w-4" />
         Explore Marketplace
@@ -307,22 +308,60 @@ const EmptyCart = () => (
 export const Cart = () => {
   const navigate = useNavigate();
 
+  const {
+    user,
+    userRole,
+    userProfile,
+    isLoading: authLoading,
+  } = useAuth();
+
+  const role = userRole || userProfile?.role || null;
+  const isBuyer = Boolean(user && role === 'buyer');
+
   const [cartItems, setCartItems] = useState([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [storageError, setStorageError] = useState('');
 
+  // Protect the cart page from unauthenticated users and other roles.
   useEffect(() => {
+    if (authLoading) return;
+
+    if (!user) {
+      navigate('/login', { replace: true });
+      return;
+    }
+
+    if (role && role !== 'buyer') {
+      const roleHome = {
+        admin: '/admin/dashboard',
+        producer: '/producer/dashboard',
+        aggregator: '/aggregator/dashboard',
+      };
+
+      navigate(roleHome[role] || '/', { replace: true });
+    }
+  }, [authLoading, user, role, navigate]);
+
+  // Load the cart only after authentication confirms this is a buyer.
+  useEffect(() => {
+    if (authLoading || !isBuyer) {
+      setCartItems([]);
+      setIsLoaded(false);
+      return;
+    }
+
     setCartItems(readCartFromStorage());
     setIsLoaded(true);
 
     const handleStorage = (event) => {
-      if (event.key === CART_STORAGE_KEY) {
-        setCartItems(readCartFromStorage());
-      }
+      if (event.key !== CART_STORAGE_KEY) return;
+      setCartItems(readCartFromStorage());
     };
 
-    // Custom events synchronize pages in this tab.
-    const handleCartUpdated = () => {
+    const handleCartUpdated = (event) => {
+      // Ignore our own save event to prevent a read/write loop.
+      if (event?.detail?.source === CART_PAGE_SOURCE) return;
+
       setCartItems(readCartFromStorage());
     };
 
@@ -339,80 +378,79 @@ export const Cart = () => {
         handleCartUpdated
       );
     };
-  }, []);
+  }, [authLoading, isBuyer]);
 
-  // Persist only after the initial cart read.
+  // Persist changes only when the buyer's cart has loaded.
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isBuyer || !isLoaded) return;
 
-    const saved = saveCartToStorage(cartItems);
-
-    setStorageError(
-      saved
-        ? ''
-        : 'Your cart could not be saved on this device. Check your browser storage settings.'
+    const saved = saveCartToStorage(
+      cartItems,
+      CART_PAGE_SOURCE
     );
-  }, [cartItems, isLoaded]);
 
-  const updateQuantity = useCallback(
-    (productId, requestedQuantity) => {
-      setCartItems((currentItems) =>
-        currentItems.map((item) => {
-          if (String(item.id) !== String(productId)) {
-            return item;
-          }
+    const nextError = saved
+      ? ''
+      : 'Your cart could not be saved on this device. Check your browser storage settings.';
 
-          const stock = getAvailableQuantity(item);
+    setStorageError((currentError) =>
+      currentError === nextError ? currentError : nextError
+    );
+  }, [cartItems, isLoaded, isBuyer]);
 
-          // A zero-stock item cannot be increased or purchased.
-          if (stock !== null && stock <= 0) {
-            return item;
-          }
+  // Update from the latest state so rapid clicks do not use stale quantities.
+  const changeQuantity = useCallback((productId, delta) => {
+    setCartItems((currentItems) =>
+      currentItems.map((item) => {
+        if (String(item.id) !== String(productId)) {
+          return item;
+        }
 
-          const requested = Number(requestedQuantity);
+        const stock = getAvailableQuantity(item);
 
-          let quantity =
-            Number.isFinite(requested) && requested > 0
-              ? requested
-              : 1;
+        if (stock !== null && stock <= 0) {
+          return item;
+        }
 
-          if (stock !== null) {
-            quantity = Math.min(quantity, stock);
-          }
+        const currentQuantity = Math.max(
+          1,
+          Number(item.quantity) || 1
+        );
 
-          return {
-            ...item,
-            quantity,
-          };
-        })
-      );
-    },
-    []
-  );
+        const requestedQuantity = currentQuantity + delta;
+
+        const quantity =
+          stock !== null
+            ? Math.min(
+                Math.max(1, requestedQuantity),
+                stock
+              )
+            : Math.max(1, requestedQuantity);
+
+        if (quantity === currentQuantity) {
+          return item;
+        }
+
+        return {
+          ...item,
+          quantity,
+        };
+      })
+    );
+  }, []);
 
   const increaseQuantity = useCallback(
     (item) => {
-      const stock = getAvailableQuantity(item);
-      const currentQuantity = Number(item.quantity) || 1;
-
-      if (stock !== null && currentQuantity >= stock) {
-        return;
-      }
-
-      updateQuantity(item.id, currentQuantity + 1);
+      changeQuantity(item.id, 1);
     },
-    [updateQuantity]
+    [changeQuantity]
   );
 
   const decreaseQuantity = useCallback(
     (item) => {
-      const currentQuantity = Number(item.quantity) || 1;
-
-      if (currentQuantity <= 1) return;
-
-      updateQuantity(item.id, currentQuantity - 1);
+      changeQuantity(item.id, -1);
     },
-    [updateQuantity]
+    [changeQuantity]
   );
 
   const removeItem = useCallback((productId) => {
@@ -428,7 +466,6 @@ export const Cart = () => {
   }, []);
 
   const cartSummary = useMemo(() => {
-    // Keep unavailable items visible so buyers can remove them.
     const items = cartItems;
 
     const itemCount = items.reduce(
@@ -437,26 +474,46 @@ export const Cart = () => {
       0
     );
 
-    const subtotal = items.reduce((total, item) => {
-      const stock = getAvailableQuantity(item);
+    let subtotal = 0;
 
-      // Do not include known out-of-stock items in the subtotal.
-      if (stock !== null && stock <= 0) {
-        return total;
+    const producers = new Set();
+    const producerBreakdownMap = new Map();
+
+    items.forEach((item) => {
+      const stock = getAvailableQuantity(item);
+      const isOutOfStock = stock !== null && stock <= 0;
+      const quantity = Math.max(
+        0,
+        Number(item.quantity) || 0
+      );
+      const price = Number(item.pricePerUnit) || 0;
+
+      if (item.producerId) {
+        producers.add(String(item.producerId));
       }
 
-      return (
-        total +
-        Number(item.pricePerUnit || 0) *
-          Math.max(0, Number(item.quantity) || 0)
-      );
-    }, 0);
+      const producerKey = item.producerId
+        ? String(item.producerId)
+        : `unknown-${String(item.id)}`;
 
-    const producers = new Set(
-      items
-        .map((item) => item.producerId)
-        .filter(Boolean)
-    );
+      if (!producerBreakdownMap.has(producerKey)) {
+        producerBreakdownMap.set(producerKey, {
+          id: producerKey,
+          name: item.producerName || 'Producer not identified',
+          subtotal: 0,
+          productCount: 0,
+        });
+      }
+
+      const producer = producerBreakdownMap.get(producerKey);
+      producer.productCount += 1;
+
+      if (!isOutOfStock) {
+        const itemSubtotal = price * quantity;
+        subtotal += itemSubtotal;
+        producer.subtotal += itemSubtotal;
+      }
+    });
 
     const outOfStockItems = items.filter(
       (item) => getAvailableQuantity(item) === 0
@@ -476,6 +533,9 @@ export const Cart = () => {
       items: itemCount,
       subtotal,
       producers: producers.size,
+      producerBreakdown: Array.from(
+        producerBreakdownMap.values()
+      ),
       validItems: items,
       outOfStockItems,
       overStockItems,
@@ -485,15 +545,34 @@ export const Cart = () => {
     };
   }, [cartItems]);
 
-  const handleCheckout = () => {
-    if (cartItems.length === 0) return;
-
-    if (cartSummary.hasUnavailableItems) {
+  const handleCheckout = useCallback(() => {
+    if (
+      cartItems.length === 0 ||
+      cartSummary.hasUnavailableItems
+    ) {
       return;
     }
 
     navigate('/checkout');
-  };
+  }, [
+    cartItems.length,
+    cartSummary.hasUnavailableItems,
+    navigate,
+  ]);
+
+  // Never display cart calculations while authentication or role is unresolved.
+  if (authLoading || !user || !role || role !== 'buyer') {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center bg-slate-50">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-emerald-100 border-t-emerald-600" />
+          <p className="mt-3 text-sm font-medium text-slate-500">
+            Loading AgroLink...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoaded) {
     return (
@@ -505,11 +584,11 @@ export const Cart = () => {
               {[1, 2, 3].map((item) => (
                 <div
                   key={item}
-                  className="h-36 animate-pulse rounded-2xl bg-white"
+                  className="h-36 rounded-2xl bg-white"
                 />
               ))}
             </div>
-            <div className="h-72 animate-pulse rounded-2xl bg-white" />
+            <div className="h-72 rounded-2xl bg-white" />
           </div>
         </div>
       </div>
@@ -617,23 +696,25 @@ export const Cart = () => {
                 const itemPrice = Number(item.pricePerUnit) || 0;
                 const stock = getAvailableQuantity(item);
                 const isOutOfStock = stock === 0;
+
                 const isOverStock =
                   stock !== null &&
                   stock > 0 &&
                   itemQuantity > stock;
+
                 const isAtStockLimit =
                   stock !== null &&
                   stock > 0 &&
                   itemQuantity >= stock;
-                const itemTotal =
-                  isOutOfStock
-                    ? 0
-                    : itemPrice * itemQuantity;
+
+                const itemTotal = isOutOfStock
+                  ? 0
+                  : itemPrice * itemQuantity;
 
                 return (
                   <article
                     key={item.id}
-                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-emerald-100 hover:shadow-md sm:rounded-3xl"
+                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-emerald-100 sm:rounded-3xl"
                   >
                     <div className="flex gap-3 p-3 sm:gap-5 sm:p-5">
                       <Link
@@ -734,11 +815,13 @@ export const Cart = () => {
                               Total
                             </p>
 
-                            <p className={`mt-0.5 text-sm font-black sm:text-base ${
-                              isOutOfStock
-                                ? 'text-slate-400'
-                                : 'text-emerald-700'
-                            }`}>
+                            <p
+                              className={`mt-0.5 text-sm font-black sm:text-base ${
+                                isOutOfStock
+                                  ? 'text-slate-400'
+                                  : 'text-emerald-700'
+                              }`}
+                            >
                               ₦{formatCurrency(itemTotal)}
                             </p>
                           </div>
@@ -820,6 +903,46 @@ export const Cart = () => {
                   </div>
                 </div>
 
+                {cartSummary.producerBreakdown.length > 0 && (
+                  <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3.5">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <p className="text-xs font-black text-slate-800">
+                        Producer subtotals
+                      </p>
+                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-emerald-700">
+                        {cartSummary.producerBreakdown.length}{' '}
+                        {cartSummary.producerBreakdown.length === 1
+                          ? 'producer'
+                          : 'producers'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {cartSummary.producerBreakdown.map((producer) => (
+                        <div
+                          key={producer.id}
+                          className="flex items-start justify-between gap-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-bold text-slate-700">
+                              {producer.name}
+                            </p>
+                            <p className="mt-0.5 text-[10px] text-slate-500">
+                              {producer.productCount}{' '}
+                              {producer.productCount === 1
+                                ? 'product'
+                                : 'products'}
+                            </p>
+                          </div>
+                          <p className="shrink-0 text-xs font-black tabular-nums text-slate-900">
+                            ₦{formatCurrency(producer.subtotal)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="my-5 border-t border-slate-100" />
 
                 <div className="flex items-end justify-between gap-4">
@@ -844,7 +967,7 @@ export const Cart = () => {
                     cartItems.length === 0 ||
                     cartSummary.hasUnavailableItems
                   }
-                  className="mt-6 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-600/20 transition hover:-translate-y-0.5 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                  className="mt-6 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Proceed to Checkout
                   <ArrowRight className="h-4 w-4" />

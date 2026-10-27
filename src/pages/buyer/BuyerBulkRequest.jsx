@@ -52,7 +52,7 @@ function getFriendlyError(error, fallback) {
 
   if (
     message.includes('approved aggregator') ||
-    message.includes('aggregator') && message.includes('valid')
+    (message.includes('aggregator') && message.includes('valid'))
   ) {
     return 'The selected aggregator is no longer available or approved. Please select another aggregator.';
   }
@@ -113,10 +113,10 @@ export default function BuyerBulkRequest() {
   const [success, setSuccess] = useState('');
   const [requestReference, setRequestReference] = useState('');
 
+  // Load approved aggregators through one reusable function.
   const loadAggregators = useCallback(async () => {
     setLoadingAggregators(true);
     setAggregatorLoadError('');
-    setError('');
 
     try {
       const { data, error: rpcError } = await supabase.rpc(
@@ -135,6 +135,7 @@ export default function BuyerBulkRequest() {
 
       setAggregators(availableAggregators);
 
+      //this Keep the selected aggregator only if it is still available.
       setAggregatorId((currentId) =>
         availableAggregators.some(
           (aggregator) => aggregator.id === currentId
@@ -145,6 +146,7 @@ export default function BuyerBulkRequest() {
     } catch (loadError) {
       console.error('Load approved aggregators error:', loadError);
       setAggregators([]);
+      setAggregatorId('');
       setAggregatorLoadError(
         'We could not load approved aggregators. Check your connection and try again.'
       );
@@ -153,6 +155,7 @@ export default function BuyerBulkRequest() {
     }
   }, []);
 
+  // The initial load and the Retry button use the same function.
   useEffect(() => {
     let active = true;
 
@@ -177,12 +180,20 @@ export default function BuyerBulkRequest() {
 
         if (active) {
           setAggregators(availableAggregators);
+          setAggregatorId((currentId) =>
+            availableAggregators.some(
+              (aggregator) => aggregator.id === currentId
+            )
+              ? currentId
+              : ''
+          );
         }
       } catch (loadError) {
         console.error('Load approved aggregators error:', loadError);
 
         if (active) {
           setAggregators([]);
+          setAggregatorId('');
           setAggregatorLoadError(
             'We could not load approved aggregators. Check your connection and try again.'
           );
@@ -207,6 +218,8 @@ export default function BuyerBulkRequest() {
     );
 
     setError('');
+    setSuccess('');
+    setRequestReference('');
   }
 
   function addItem() {
@@ -287,6 +300,8 @@ export default function BuyerBulkRequest() {
       const unit = item.unit.trim();
       const quantityText = String(item.quantity).trim();
       const priceText = String(item.target_price_per_unit).trim();
+      const quantity = Number(quantityText);
+      const price = Number(priceText);
 
       if (!cropName || cropName.length > MAX_CROP_LENGTH) {
         return `Item ${index + 1}: enter a crop name of no more than ${MAX_CROP_LENGTH} characters.`;
@@ -298,16 +313,15 @@ export default function BuyerBulkRequest() {
 
       if (
         !quantityText ||
-        !Number.isFinite(Number(quantityText)) ||
-        Number(quantityText) <= 0
+        !Number.isFinite(quantity) ||
+        quantity <= 0
       ) {
         return `Item ${index + 1}: quantity must be a valid number greater than zero.`;
       }
 
       if (
         priceText !== '' &&
-        (!Number.isFinite(Number(priceText)) ||
-          Number(priceText) < 0)
+        (!Number.isFinite(price) || price < 0)
       ) {
         return `Item ${index + 1}: target price must be zero or greater.`;
       }
@@ -369,8 +383,8 @@ export default function BuyerBulkRequest() {
           : data?.id || data?.request_id || '';
 
       if (!reference) {
-        console.error(
-          'Bulk request RPC returned no recognizable request reference:',
+        console.warn(
+          'Bulk request submitted, but the RPC returned no recognizable request reference:',
           data
         );
       }
@@ -391,6 +405,9 @@ export default function BuyerBulkRequest() {
       setSubmitting(false);
     }
   }
+
+  const formDisabled =
+    submitting || !user?.id || loadingAggregators;
 
   return (
     <main className="min-h-screen bg-gray-50 px-4 py-6 sm:px-6 lg:px-8">
@@ -425,6 +442,19 @@ export default function BuyerBulkRequest() {
             <ClipboardList className="hidden h-16 w-16 shrink-0 text-emerald-100 sm:block" />
           </div>
         </section>
+
+        {!user?.id && (
+          <div
+            role="alert"
+            className="mb-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+          >
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+            <p>
+              Please sign in with your buyer account before submitting a bulk
+              request.
+            </p>
+          </div>
+        )}
 
         {error && (
           <div
@@ -481,10 +511,13 @@ export default function BuyerBulkRequest() {
             <select
               id="aggregator"
               value={aggregatorId}
-              onChange={(event) => setAggregatorId(event.target.value)}
+              onChange={(event) => {
+                setAggregatorId(event.target.value);
+                setError('');
+              }}
               className={inputClass}
               required
-              disabled={loadingAggregators || submitting}
+              disabled={formDisabled || Boolean(aggregatorLoadError)}
             >
               <option value="">
                 {loadingAggregators
@@ -530,7 +563,7 @@ export default function BuyerBulkRequest() {
               aggregators.length === 0 && (
                 <p className="mt-3 text-sm text-amber-700">
                   No approved aggregators are currently available. Please
-                  check again later.
+                  try again later.
                 </p>
               )}
           </section>
@@ -603,7 +636,7 @@ export default function BuyerBulkRequest() {
                         }
                         placeholder="e.g. Maize"
                         required
-                        disabled={submitting}
+                        disabled={formDisabled}
                       />
                     </div>
 
@@ -626,7 +659,7 @@ export default function BuyerBulkRequest() {
                         }
                         placeholder="e.g. 10"
                         required
-                        disabled={submitting}
+                        disabled={formDisabled}
                       />
                     </div>
 
@@ -641,7 +674,7 @@ export default function BuyerBulkRequest() {
                         onChange={(event) =>
                           updateItem(index, 'unit', event.target.value)
                         }
-                        disabled={submitting}
+                        disabled={formDisabled}
                       >
                         <option value="tonnes">Tonnes</option>
                         <option value="kg">Kilograms (kg)</option>
@@ -674,7 +707,7 @@ export default function BuyerBulkRequest() {
                           )
                         }
                         placeholder="Optional"
-                        disabled={submitting}
+                        disabled={formDisabled}
                       />
                     </div>
 
@@ -695,7 +728,7 @@ export default function BuyerBulkRequest() {
                           updateItem(index, 'notes', event.target.value)
                         }
                         placeholder="e.g. Dry, clean maize with minimal impurities"
-                        disabled={submitting}
+                        disabled={formDisabled}
                       />
                     </div>
                   </div>
@@ -731,13 +764,12 @@ export default function BuyerBulkRequest() {
                     maxLength={MAX_PICKUP_LENGTH}
                     placeholder="Enter town, market, or pickup point"
                     required
-                    disabled={submitting}
+                    disabled={formDisabled}
                   />
                 </div>
 
                 <p className="mt-2 text-xs text-gray-500">
-                  AgroLink currently supports pickup arrangements. Delivery is
-                  not automatically included.
+                  AgroLink currently supports pickup arrangements only.
                 </p>
               </div>
 
@@ -752,7 +784,7 @@ export default function BuyerBulkRequest() {
                   className={inputClass}
                   value={neededBy}
                   onChange={(event) => setNeededBy(event.target.value)}
-                  disabled={submitting}
+                  disabled={formDisabled}
                 />
               </div>
 
@@ -768,7 +800,7 @@ export default function BuyerBulkRequest() {
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
                   placeholder="Any other requirements..."
-                  disabled={submitting}
+                  disabled={formDisabled}
                 />
               </div>
             </div>
@@ -785,8 +817,7 @@ export default function BuyerBulkRequest() {
             <button
               type="submit"
               disabled={
-                submitting ||
-                loadingAggregators ||
+                formDisabled ||
                 Boolean(aggregatorLoadError) ||
                 aggregators.length === 0
               }

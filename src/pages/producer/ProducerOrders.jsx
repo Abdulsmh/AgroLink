@@ -107,47 +107,36 @@ const formatPickupTime = (time) => {
   }).format(parsedDate);
 };
 
-const shortBuyerReference = (buyerId) => {
-  if (!buyerId) return 'Buyer';
-
-  return `Buyer #${String(buyerId).slice(0, 6).toUpperCase()}`;
-};
-
 const statusConfig = {
   pending: {
     label: 'Pending',
     description: 'Waiting for your confirmation',
     className: 'border-amber-200 bg-amber-50 text-amber-700',
     icon: Clock3,
-    dot: 'bg-amber-500',
   },
   confirmed: {
     label: 'Confirmed',
     description: 'Order accepted',
     className: 'border-blue-200 bg-blue-50 text-blue-700',
     icon: CheckCircle2,
-    dot: 'bg-blue-500',
   },
   processing: {
-    label: 'Processing',
+    label: 'Ready for Pickup',
     description: 'Preparing the product for collection',
     className: 'border-violet-200 bg-violet-50 text-violet-700',
     icon: Package,
-    dot: 'bg-violet-500',
   },
   completed: {
     label: 'Completed',
     description: 'Buyer confirmed collection',
     className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     icon: CheckCircle2,
-    dot: 'bg-emerald-500',
   },
   cancelled: {
     label: 'Cancelled',
     description: 'Order has been cancelled',
     className: 'border-red-200 bg-red-50 text-red-700',
     icon: XCircle,
-    dot: 'bg-red-500',
   },
 };
 
@@ -178,7 +167,8 @@ const getStatusProgress = (status) => {
   return ((index + 1) / statusFlow.length) * 100;
 };
 
-// Producers can prepare orders, but buyers confirm collection.
+// Producers can accept pending orders, prepare confirmed orders,
+// or cancel orders. Buyers confirm collection.
 const allowedNextStatuses = (currentStatus) => {
   switch (currentStatus) {
     case 'pending':
@@ -187,9 +177,6 @@ const allowedNextStatuses = (currentStatus) => {
     case 'confirmed':
       return ['processing', 'cancelled'];
 
-    case 'processing':
-    case 'completed':
-    case 'cancelled':
     default:
       return [];
   }
@@ -200,6 +187,8 @@ export const ProducerOrders = () => {
 
   const [orders, setOrders] = useState([]);
   const [productMap, setProductMap] = useState({});
+  const [buyerMap, setBuyerMap] = useState({});
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState(null);
@@ -211,11 +200,69 @@ export const ProducerOrders = () => {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [error, setError] = useState('');
 
+  /*
+   * Get buyer names using the secure Supabase RPC.
+   *
+   * The RPC returns order_id, buyer_id and buyer_name for orders
+   * belonging to the authenticated producer.
+   *
+   * No buyer phone numbers or unrestricted profile queries are used.
+   */
+  const fetchBuyerNames = useCallback(async (orderRows) => {
+    const rows = orderRows || [];
+
+    if (rows.length === 0) {
+      setBuyerMap({});
+      return;
+    }
+
+    const orderIds = new Set(
+      rows.map((order) => order.id).filter(Boolean)
+    );
+
+    const buyerIds = new Set(
+      rows.map((order) => order.buyer_id).filter(Boolean)
+    );
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc(
+        'get_producer_order_buyer_names'
+      );
+
+      if (rpcError) throw rpcError;
+
+      const mappedBuyers = {};
+
+      (data || []).forEach((buyer) => {
+        // Only accept results associated with the producer's
+        // currently loaded orders.
+        if (!orderIds.has(buyer.order_id)) return;
+        if (!buyerIds.has(buyer.buyer_id)) return;
+
+        const name = String(buyer.buyer_name || '').trim();
+
+        if (name) {
+          mappedBuyers[buyer.buyer_id] = {
+            full_name: name,
+          };
+        }
+      });
+
+      setBuyerMap(mappedBuyers);
+    } catch (rpcError) {
+      // Order management should continue working even if buyer
+      // names temporarily cannot be retrieved.
+      console.error('Unable to retrieve buyer names:', rpcError);
+      setBuyerMap({});
+    }
+  }, []);
+
   const fetchOrders = useCallback(
     async (isRefresh = false) => {
       if (!user?.id) {
         setOrders([]);
         setProductMap({});
+        setBuyerMap({});
         setSelectedOrder(null);
         setLoading(false);
         setRefreshing(false);
@@ -281,6 +328,8 @@ export const ProducerOrders = () => {
         } else {
           setProductMap({});
         }
+
+        await fetchBuyerNames(orderRows);
       } catch (err) {
         console.error('Producer orders error:', err);
         setError(err.message || 'Unable to load your orders.');
@@ -289,16 +338,13 @@ export const ProducerOrders = () => {
         setRefreshing(false);
       }
     },
-    [user?.id]
+    [user?.id, fetchBuyerNames]
   );
 
-  // Load orders when the producer signs in or changes.
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
 
-  // Subscribe to order changes so buyer collection confirmations
-  // and other authorized updates appear without manual refreshing.
   useEffect(() => {
     if (!user?.id) return undefined;
 
@@ -323,13 +369,12 @@ export const ProducerOrders = () => {
     };
   }, [user?.id, fetchOrders]);
 
-  // The default view excludes completed orders.
-  // Use the Completed filter to view order history.
   const filteredOrders = useMemo(() => {
     const search = searchTerm.trim().toLowerCase();
 
     return orders.filter((order) => {
       const product = productMap[order.product_id];
+      const buyer = buyerMap[order.buyer_id];
 
       const matchesStatus =
         statusFilter === 'all'
@@ -341,7 +386,7 @@ export const ProducerOrders = () => {
         order.delivery_location,
         order.pickup_location,
         order.pickup_instructions,
-        order.buyer_id,
+        buyer?.full_name,
         product?.crop_name,
         product?.location,
       ]
@@ -354,7 +399,7 @@ export const ProducerOrders = () => {
 
       return matchesStatus && matchesSearch;
     });
-  }, [orders, productMap, searchTerm, statusFilter]);
+  }, [orders, productMap, buyerMap, searchTerm, statusFilter]);
 
   const summary = useMemo(() => {
     const activeOrders = orders.filter(
@@ -397,9 +442,7 @@ export const ProducerOrders = () => {
   const updateOrderStatus = async (order, newStatus) => {
     if (!newStatus || newStatus === order.status) return;
 
-    const allowed = allowedNextStatuses(order.status);
-
-    if (!allowed.includes(newStatus)) {
+    if (!allowedNextStatuses(order.status).includes(newStatus)) {
       toast.error(
         'Only the buyer can confirm collection and complete this order.'
       );
@@ -424,11 +467,11 @@ export const ProducerOrders = () => {
 
       if (updateError) throw updateError;
 
-      setOrders((current) =>
-        current.map((item) =>
-          item.id === order.id ? data : item
-        )
+      const updatedOrders = orders.map((item) =>
+        item.id === order.id ? data : item
       );
+
+      setOrders(updatedOrders);
 
       setSelectedOrder((current) =>
         current?.id === order.id ? data : current
@@ -437,6 +480,8 @@ export const ProducerOrders = () => {
       toast.success(
         `Order marked as ${getStatusConfig(newStatus).label}.`
       );
+
+      await fetchBuyerNames(updatedOrders);
     } catch (err) {
       console.error('Order status update error:', err);
 
@@ -458,7 +503,9 @@ export const ProducerOrders = () => {
       order.status === 'cancelled' ||
       order.status === 'completed'
     ) {
-      toast.error('Pickup details cannot be changed for this order.');
+      toast.error(
+        'Pickup details cannot be changed for this order.'
+      );
       return false;
     }
 
@@ -562,10 +609,30 @@ export const ProducerOrders = () => {
       </section>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <SummaryCard label="All Orders" value={summary.total} icon={Package} tone="slate" />
-        <SummaryCard label="Needs Attention" value={summary.pending} icon={Clock3} tone="amber" />
-        <SummaryCard label="Processing" value={summary.processing} icon={Truck} tone="violet" />
-        <SummaryCard label="Completed" value={summary.completed} icon={CheckCircle2} tone="emerald" />
+        <SummaryCard
+          label="All Orders"
+          value={summary.total}
+          icon={Package}
+          tone="slate"
+        />
+        <SummaryCard
+          label="Needs Attention"
+          value={summary.pending}
+          icon={Clock3}
+          tone="amber"
+        />
+        <SummaryCard
+          label="Ready for Pickup"
+          value={summary.processing}
+          icon={Truck}
+          tone="violet"
+        />
+        <SummaryCard
+          label="Completed"
+          value={summary.completed}
+          icon={CheckCircle2}
+          tone="emerald"
+        />
       </section>
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -626,7 +693,7 @@ export const ProducerOrders = () => {
               type="text"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search by order, product or location..."
+              placeholder="Search by order, buyer, product or location..."
               className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-800 outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
             />
           </div>
@@ -642,7 +709,7 @@ export const ProducerOrders = () => {
                 <option key={status} value={status}>
                   {status === 'all'
                     ? 'Active orders'
-                    : status.charAt(0).toUpperCase() + status.slice(1)}
+                    : getStatusConfig(status).label}
                 </option>
               ))}
             </select>
@@ -712,6 +779,7 @@ export const ProducerOrders = () => {
                   key={order.id}
                   order={order}
                   product={productMap[order.product_id]}
+                  buyer={buyerMap[order.buyer_id]}
                   onView={() => setSelectedOrder(order)}
                 />
               ))}
@@ -766,7 +834,8 @@ export const ProducerOrders = () => {
                         </td>
 
                         <td className="px-5 py-4 text-sm font-semibold text-slate-700">
-                          {formatNumber(order.quantity)} {product?.unit || 'units'}
+                          {formatNumber(order.quantity)}{' '}
+                          {product?.unit || 'units'}
                         </td>
 
                         <td className="px-5 py-4">
@@ -776,7 +845,10 @@ export const ProducerOrders = () => {
                         </td>
 
                         <td className="px-5 py-4">
-                          <StatusBadge status={order.status} icon={StatusIcon} />
+                          <StatusBadge
+                            status={order.status}
+                            icon={StatusIcon}
+                          />
                         </td>
 
                         <td className="px-5 py-4">
@@ -806,6 +878,7 @@ export const ProducerOrders = () => {
           key={selectedOrder.id}
           order={selectedOrder}
           product={productMap[selectedOrder.product_id]}
+          buyer={buyerMap[selectedOrder.buyer_id] || null}
           updating={updatingId === selectedOrder.id}
           savingPickup={savingPickupId === selectedOrder.id}
           onClose={() => setSelectedOrder(null)}
@@ -882,7 +955,7 @@ const StatusBadge = ({ status, icon: Icon }) => {
   );
 };
 
-const MobileOrderCard = ({ order, product, onView }) => {
+const MobileOrderCard = ({ order, product, buyer, onView }) => {
   const config = getStatusConfig(order.status);
 
   return (
@@ -902,8 +975,14 @@ const MobileOrderCard = ({ order, product, onView }) => {
               {product?.crop_name || 'Product unavailable'}
             </p>
             <p className="mt-1 text-[11px] text-slate-400">
-              #{order.id.slice(0, 8).toUpperCase()} · {formatDate(order.created_at)}
+              #{order.id.slice(0, 8).toUpperCase()} ·{' '}
+              {formatDate(order.created_at)}
             </p>
+            {buyer?.full_name && (
+              <p className="mt-1 truncate text-xs font-semibold text-slate-600">
+                Buyer: {buyer.full_name}
+              </p>
+            )}
           </div>
         </div>
 
@@ -975,6 +1054,7 @@ const EmptyOrders = ({ hasOrders, hasFilters, clearFilters }) => (
 const OrderDetailsModal = ({
   order,
   product,
+  buyer,
   updating,
   savingPickup,
   onClose,
@@ -1024,9 +1104,9 @@ const OrderDetailsModal = ({
 
   const pickupIsScheduled = Boolean(
     order.pickup_location ||
-    order.pickup_date ||
-    order.pickup_time ||
-    order.pickup_instructions
+      order.pickup_date ||
+      order.pickup_time ||
+      order.pickup_instructions
   );
 
   return (
@@ -1067,7 +1147,9 @@ const OrderDetailsModal = ({
                   </p>
 
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${config.className}`}>
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${config.className}`}
+                    >
                       <StatusIcon className="h-3.5 w-3.5" />
                       {config.label}
                     </span>
@@ -1090,13 +1172,17 @@ const OrderDetailsModal = ({
                 <div className="mt-5">
                   <div className="mb-2 flex justify-between text-[10px] font-bold text-slate-400">
                     <span>Order received</span>
-                    <span>{Math.round(getStatusProgress(order.status))}%</span>
+                    <span>
+                      {Math.round(getStatusProgress(order.status))}%
+                    </span>
                   </div>
 
                   <div className="h-2 overflow-hidden rounded-full bg-slate-200">
                     <div
                       className="h-full rounded-full bg-emerald-500 transition-all duration-500"
-                      style={{ width: `${getStatusProgress(order.status)}%` }}
+                      style={{
+                        width: `${getStatusProgress(order.status)}%`,
+                      }}
                     />
                   </div>
 
@@ -1104,13 +1190,16 @@ const OrderDetailsModal = ({
                     {statusFlow.map((status) => {
                       const currentIndex = statusFlow.indexOf(order.status);
                       const itemIndex = statusFlow.indexOf(status);
-                      const reached = currentIndex >= 0 && itemIndex <= currentIndex;
+                      const reached =
+                        currentIndex >= 0 && itemIndex <= currentIndex;
 
                       return (
                         <div
                           key={status}
                           className={`text-center text-[9px] font-bold ${
-                            reached ? 'text-emerald-600' : 'text-slate-300'
+                            reached
+                              ? 'text-emerald-600'
+                              : 'text-slate-300'
                           }`}
                         >
                           {getStatusConfig(status).label}
@@ -1142,9 +1231,10 @@ const OrderDetailsModal = ({
                   {formatNumber(order.quantity)} {product?.unit || 'units'}
                 </p>
 
-                {product?.price_per_unit && (
+                {product?.price_per_unit != null && (
                   <p className="mt-1 text-[11px] text-slate-400">
-                    {formatCurrency(product.price_per_unit)} per {product.unit || 'unit'}
+                    {formatCurrency(product.price_per_unit)} per{' '}
+                    {product.unit || 'unit'}
                   </p>
                 )}
               </div>
@@ -1152,25 +1242,39 @@ const OrderDetailsModal = ({
           </section>
 
           <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <InfoBox label="Order Amount" value={formatCurrency(order.total_amount)} strong />
-            <InfoBox label="Order Date" value={formatDate(order.created_at)} />
-            <InfoBox label="Buyer" value={shortBuyerReference(order.buyer_id)} />
-            <InfoBox label="Last Updated" value={formatDate(order.updated_at)} />
+            <InfoBox
+              label="Order Amount"
+              value={formatCurrency(order.total_amount)}
+              strong
+            />
+            <InfoBox
+              label="Order Date"
+              value={formatDate(order.created_at)}
+            />
+            <InfoBox
+              label="Buyer"
+              value={buyer?.full_name || 'Buyer name unavailable'}
+            />
+            <InfoBox
+              label="Last Updated"
+              value={formatDate(order.updated_at)}
+            />
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <section className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
                 <MapPin className="h-4 w-4" />
               </div>
 
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Buyer's Original Location
+                <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                  Buyer&apos;s Original Location
                 </p>
 
                 <p className="mt-2 break-words text-sm font-semibold leading-6 text-slate-700">
-                  {order.delivery_location || 'No location provided by the buyer.'}
+                  {order.delivery_location ||
+                    'No location provided by the buyer.'}
                 </p>
 
                 <p className="mt-2 text-[11px] leading-5 text-slate-400">
@@ -1214,8 +1318,13 @@ const OrderDetailsModal = ({
                   required
                   maxLength={500}
                   value={pickupLocation}
-                  onChange={(event) => setPickupLocation(event.target.value)}
-                  disabled={savingPickup || ['cancelled', 'completed'].includes(order.status)}
+                  onChange={(event) =>
+                    setPickupLocation(event.target.value)
+                  }
+                  disabled={
+                    savingPickup ||
+                    ['cancelled', 'completed'].includes(order.status)
+                  }
                   placeholder="e.g. Farm gate, village collection centre..."
                   className="h-11 w-full rounded-xl border border-slate-200 px-3.5 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10 disabled:bg-slate-50"
                 />
@@ -1235,8 +1344,13 @@ const OrderDetailsModal = ({
                     id="pickup-date"
                     type="date"
                     value={pickupDate}
-                    onChange={(event) => setPickupDate(event.target.value)}
-                    disabled={savingPickup || ['cancelled', 'completed'].includes(order.status)}
+                    onChange={(event) =>
+                      setPickupDate(event.target.value)
+                    }
+                    disabled={
+                      savingPickup ||
+                      ['cancelled', 'completed'].includes(order.status)
+                    }
                     className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10 disabled:bg-slate-50"
                   />
                 </div>
@@ -1254,8 +1368,13 @@ const OrderDetailsModal = ({
                     id="pickup-time"
                     type="time"
                     value={pickupTime}
-                    onChange={(event) => setPickupTime(event.target.value)}
-                    disabled={savingPickup || ['cancelled', 'completed'].includes(order.status)}
+                    onChange={(event) =>
+                      setPickupTime(event.target.value)
+                    }
+                    disabled={
+                      savingPickup ||
+                      ['cancelled', 'completed'].includes(order.status)
+                    }
                     className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10 disabled:bg-slate-50"
                   />
                 </div>
@@ -1274,8 +1393,13 @@ const OrderDetailsModal = ({
                   rows={3}
                   maxLength={2000}
                   value={pickupInstructions}
-                  onChange={(event) => setPickupInstructions(event.target.value)}
-                  disabled={savingPickup || ['cancelled', 'completed'].includes(order.status)}
+                  onChange={(event) =>
+                    setPickupInstructions(event.target.value)
+                  }
+                  disabled={
+                    savingPickup ||
+                    ['cancelled', 'completed'].includes(order.status)
+                  }
                   placeholder="Directions or collection instructions..."
                   className="w-full resize-y rounded-xl border border-slate-200 px-3.5 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10 disabled:bg-slate-50"
                 />
@@ -1291,9 +1415,11 @@ const OrderDetailsModal = ({
                   disabled={savingPickup || updating}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60 sm:w-auto"
                 >
-                  {savingPickup
-                    ? <RefreshCw className="h-4 w-4 animate-spin" />
-                    : <Save className="h-4 w-4" />}
+                  {savingPickup ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
 
                   {savingPickup
                     ? 'Saving pickup details...'
@@ -1314,9 +1440,21 @@ const OrderDetailsModal = ({
                 </div>
 
                 <div className="mt-3 space-y-3">
-                  <PickupInfo icon={MapPin} label="Collection point" value={order.pickup_location} />
-                  <PickupInfo icon={CalendarDays} label="Collection date" value={formatPickupDate(order.pickup_date)} />
-                  <PickupInfo icon={Clock3} label="Collection time" value={formatPickupTime(order.pickup_time)} />
+                  <PickupInfo
+                    icon={MapPin}
+                    label="Collection point"
+                    value={order.pickup_location}
+                  />
+                  <PickupInfo
+                    icon={CalendarDays}
+                    label="Collection date"
+                    value={formatPickupDate(order.pickup_date)}
+                  />
+                  <PickupInfo
+                    icon={Clock3}
+                    label="Collection time"
+                    value={formatPickupTime(order.pickup_time)}
+                  />
 
                   {order.pickup_instructions && (
                     <PickupInfo
@@ -1379,15 +1517,15 @@ const OrderDetailsModal = ({
 
               <div>
                 <p className="text-sm font-bold text-violet-800">
-                  Awaiting buyer collection confirmation
+                  Ready for pickup
                 </p>
 
                 <p className="mt-1 text-xs leading-5 text-violet-700">
-                  Your order is being prepared for collection. Make sure
-                  the pickup location, date, and time are correct, and
-                  coordinate collection with the buyer. After collecting
-                  the produce, the buyer must confirm receipt from their
-                  account before the order becomes completed.
+                  The order is ready for collection. Make sure the pickup
+                  location, date, and time are correct, and coordinate
+                  collection with the buyer. After collecting the produce,
+                  the buyer must confirm receipt from their account before
+                  the order becomes completed.
                 </p>
               </div>
             </div>

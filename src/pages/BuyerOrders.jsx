@@ -21,6 +21,9 @@ import {
   Truck,
   X,
   XCircle,
+  CalendarDays,
+  Clock,
+  ClipboardList,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
@@ -41,14 +44,16 @@ const STATUS_CONFIG = {
     icon: CheckCircle2,
   },
   processing: {
-    label: 'Processing',
-    description: 'The producer is preparing your products. Confirm collection after you receive them.',
+    label: 'Ready for Pickup',
+    description:
+      'Your producer has marked your products as ready. Check the pickup arrangements before collecting.',
     className: 'bg-purple-100 text-purple-800',
     icon: Package,
   },
   completed: {
     label: 'Completed',
-    description: 'Collection has been confirmed and the order is completed.',
+    description:
+      'You have confirmed collection and the order is completed.',
     className: 'bg-emerald-100 text-emerald-800',
     icon: CheckCircle2,
   },
@@ -64,7 +69,7 @@ const FILTERS = [
   { value: 'all', label: 'All Orders' },
   { value: 'pending', label: 'Pending' },
   { value: 'confirmed', label: 'Confirmed' },
-  { value: 'processing', label: 'Processing' },
+  { value: 'processing', label: 'Ready for Pickup' },
   { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
@@ -81,7 +86,9 @@ const formatDate = (value) => {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  if (Number.isNaN(date.getTime())) {
+    return 'Date unavailable';
+  }
 
   return date.toLocaleString('en-NG', {
     dateStyle: 'medium',
@@ -94,13 +101,64 @@ const formatShortDate = (value) => {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  if (Number.isNaN(date.getTime())) {
+    return 'Date unavailable';
+  }
 
   return date.toLocaleDateString('en-NG', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   });
+};
+
+// Handles date-only values without accidentally shifting the day
+// because of timezone conversion.
+const formatPickupDate = (value) => {
+  if (!value) return 'Not provided yet';
+
+  const dateString = String(value).trim();
+  const dateOnlyMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  const date = dateOnlyMatch
+    ? new Date(
+        Number(dateOnlyMatch[1]),
+        Number(dateOnlyMatch[2]) - 1,
+        Number(dateOnlyMatch[3])
+      )
+    : new Date(dateString);
+
+  if (Number.isNaN(date.getTime())) {
+    return dateString;
+  }
+
+  return date.toLocaleDateString('en-NG', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+};
+
+const formatPickupTime = (value) => {
+  if (!value) return 'Not provided yet';
+
+  const timeString = String(value).trim();
+  const match = timeString.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+
+  if (!match) return timeString;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (hours > 23 || minutes > 59) return timeString;
+
+  return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString(
+    'en-NG',
+    {
+      hour: 'numeric',
+      minute: '2-digit',
+    }
+  );
 };
 
 const getImagePath = (imagePath) => {
@@ -132,7 +190,9 @@ const getImagePath = (imagePath) => {
     }
   }
 
-  if (typeof image !== 'string' || !image.trim()) return null;
+  if (typeof image !== 'string' || !image.trim()) {
+    return null;
+  }
 
   return image.trim();
 };
@@ -195,12 +255,14 @@ const getTimelineSteps = (status) => {
       description: 'The producer accepted your order.',
     },
     {
-      label: 'Preparing products',
-      description: 'The producer is preparing your products.',
+      label: 'Ready for pickup',
+      description:
+        'The producer has marked your products as ready for collection.',
     },
     {
       label: 'Collection confirmed',
-      description: 'The order is completed after you confirm receipt.',
+      description:
+        'The order is completed after you confirm receipt.',
     },
   ];
 
@@ -248,7 +310,11 @@ function EmptyState({ filter, searchTerm }) {
           ? 'Try another search term.'
           : filter === 'all'
             ? 'Your orders will appear here when you place an order.'
-            : `You do not have any ${filter} orders right now.`}
+            : `You do not have any ${
+                filter === 'processing'
+                  ? 'ready for pickup'
+                  : filter
+              } orders right now.`}
       </p>
 
       <Link
@@ -313,6 +379,108 @@ function OrderTimeline({ status }) {
   );
 }
 
+function PickupArrangements({ order, compact = false }) {
+  const hasAnyDetails = Boolean(
+    order.pickup_location ||
+      order.pickup_date ||
+      order.pickup_time ||
+      order.pickup_instructions
+  );
+
+  return (
+    <section
+      className={`rounded-xl border ${
+        order.status === 'processing'
+          ? 'border-emerald-200 bg-emerald-50'
+          : 'border-gray-200 bg-white'
+      } ${compact ? 'p-3' : 'p-4'}`}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+          <MapPin className="h-5 w-5" />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900">
+            Pickup Arrangements
+          </h3>
+
+          <p className="mt-1 text-sm text-gray-500">
+            Collection details provided by the producer.
+          </p>
+        </div>
+
+        {order.status === 'processing' && (
+          <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+            Ready
+          </span>
+        )}
+      </div>
+
+      {hasAnyDetails ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-gray-100 bg-white p-3">
+            <div className="flex items-center gap-2 text-gray-500">
+              <MapPin className="h-4 w-4 shrink-0" />
+              <span className="text-xs font-medium">Pickup location</span>
+            </div>
+
+            <p className="mt-2 break-words text-sm font-semibold text-gray-900">
+              {order.pickup_location || 'Not provided yet'}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-gray-100 bg-white p-3">
+            <div className="flex items-center gap-2 text-gray-500">
+              <CalendarDays className="h-4 w-4 shrink-0" />
+              <span className="text-xs font-medium">Pickup date</span>
+            </div>
+
+            <p className="mt-2 text-sm font-semibold text-gray-900">
+              {formatPickupDate(order.pickup_date)}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-gray-100 bg-white p-3">
+            <div className="flex items-center gap-2 text-gray-500">
+              <Clock className="h-4 w-4 shrink-0" />
+              <span className="text-xs font-medium">Pickup time</span>
+            </div>
+
+            <p className="mt-2 text-sm font-semibold text-gray-900">
+              {formatPickupTime(order.pickup_time)}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-gray-100 bg-white p-3 sm:col-span-2">
+            <div className="flex items-center gap-2 text-gray-500">
+              <ClipboardList className="h-4 w-4 shrink-0" />
+              <span className="text-xs font-medium">
+                Pickup instructions
+              </span>
+            </div>
+
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-gray-800">
+              {order.pickup_instructions || 'No additional instructions provided.'}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 rounded-lg border border-dashed border-gray-300 bg-white p-4">
+          <p className="text-sm font-medium text-gray-800">
+            Pickup details have not been provided yet.
+          </p>
+
+          <p className="mt-1 text-sm leading-5 text-gray-500">
+            The producer can add the pickup location, date, time, and
+            instructions. Refresh your orders to check for updates.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CollectionConfirmationDialog({
   order,
   loading,
@@ -325,10 +493,7 @@ function CollectionConfirmationDialog({
     <div
       className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4"
       onMouseDown={(event) => {
-        if (
-          event.target === event.currentTarget &&
-          !loading
-        ) {
+        if (event.target === event.currentTarget && !loading) {
           onCancel();
         }
       }}
@@ -351,18 +516,19 @@ function CollectionConfirmationDialog({
         </h2>
 
         <p className="mt-2 text-sm leading-6 text-gray-600">
-          Confirm only if you have physically received your
-          products from the producer. This will mark the order
-          as completed.
+          Confirm only if you have physically received your products
+          from the producer. This will mark the order as completed.
         </p>
 
         <div className="mt-4 rounded-xl bg-gray-50 p-3">
           <p className="text-xs text-gray-500">Order reference</p>
+
           <p className="mt-1 break-all text-sm font-semibold text-gray-900">
             {order.id}
           </p>
 
           <p className="mt-3 text-xs text-gray-500">Order total</p>
+
           <p className="mt-1 text-lg font-bold text-emerald-700">
             {formatNaira(order.total_amount)}
           </p>
@@ -447,6 +613,10 @@ export default function BuyerOrders() {
               'total_amount',
               'status',
               'delivery_location',
+              'pickup_location',
+              'pickup_date',
+              'pickup_time',
+              'pickup_instructions',
               'created_at',
               'updated_at',
             ].join(', ')
@@ -487,6 +657,7 @@ export default function BuyerOrders() {
             .in('id', productIds);
 
           if (error) throw error;
+
           productData = data || [];
         }
 
@@ -499,6 +670,7 @@ export default function BuyerOrders() {
             .in('id', producerIds);
 
           if (error) throw error;
+
           profileData = data || [];
         }
 
@@ -602,6 +774,9 @@ export default function BuyerOrders() {
           .includes(term) ||
         String(order.delivery_location || '')
           .toLowerCase()
+          .includes(term) ||
+        String(order.pickup_location || '')
+          .toLowerCase()
           .includes(term);
 
       return matchesFilter && matchesSearch;
@@ -628,7 +803,8 @@ export default function BuyerOrders() {
       totalValue: enrichedOrders
         .filter((order) => order.status !== 'cancelled')
         .reduce(
-          (total, order) => total + (Number(order.total_amount) || 0),
+          (total, order) =>
+            total + (Number(order.total_amount) || 0),
           0
         ),
     };
@@ -705,12 +881,15 @@ export default function BuyerOrders() {
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center">
         <ShoppingBag className="mx-auto h-12 w-12 text-gray-300" />
+
         <h1 className="mt-4 text-2xl font-bold text-gray-900">
           Sign in to view your orders
         </h1>
+
         <p className="mt-2 text-gray-500">
           Log in to track your AgroLink purchases.
         </p>
+
         <Link
           to="/login"
           className="mt-6 inline-flex rounded-lg bg-emerald-600 px-5 py-3 font-semibold text-white hover:bg-emerald-700"
@@ -738,12 +917,14 @@ export default function BuyerOrders() {
               <p className="text-sm font-medium text-emerald-100">
                 Your AgroLink purchases
               </p>
+
               <h1 className="mt-1 text-3xl font-bold sm:text-4xl">
                 My Orders
               </h1>
+
               <p className="mt-2 max-w-2xl text-sm text-emerald-50 sm:text-base">
-                Track your orders, check producer updates, and confirm
-                collection when your products arrive.
+                Track your orders, check pickup arrangements, and confirm
+                collection when you receive your products.
               </p>
             </div>
 
@@ -768,15 +949,18 @@ export default function BuyerOrders() {
         <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-4">
           <div className="flex items-start gap-3">
             <Truck className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" />
+
             <div>
               <h2 className="text-sm font-semibold text-blue-900">
                 Collection and payment
               </h2>
+
               <p className="mt-1 text-sm leading-6 text-blue-800">
                 AgroLink orders currently use pickup arrangements.
-                Confirm collection only after you have received your
-                products. Order completion records your confirmation;
-                it does not itself process a payment.
+                Check the pickup location, date, time, and instructions
+                in your order details. Confirm collection only after
+                receiving your products. This confirmation does not
+                process or verify payment.
               </p>
             </div>
           </div>
@@ -798,7 +982,7 @@ export default function BuyerOrders() {
           </div>
 
           <div className="rounded-xl border border-gray-200 bg-white p-4">
-            <p className="text-xs font-medium text-gray-500">In Progress</p>
+            <p className="text-xs font-medium text-gray-500">Active Orders</p>
             <p className="mt-2 text-2xl font-bold text-purple-600">
               {stats.active}
             </p>
@@ -812,9 +996,7 @@ export default function BuyerOrders() {
           </div>
 
           <div className="col-span-2 rounded-xl border border-gray-200 bg-white p-4 lg:col-span-1">
-            <p className="text-xs font-medium text-gray-500">
-              Order Value*
-            </p>
+            <p className="text-xs font-medium text-gray-500">Order Value*</p>
             <p className="mt-2 text-xl font-bold text-gray-900">
               {formatNaira(stats.totalValue)}
             </p>
@@ -826,9 +1008,8 @@ export default function BuyerOrders() {
 
         <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">
-              Your Orders
-            </h2>
+            <h2 className="text-xl font-bold text-gray-900">Your Orders</h2>
+
             <p className="mt-1 text-sm text-gray-500">
               {filteredOrders.length} order
               {filteredOrders.length === 1 ? '' : 's'} found
@@ -847,6 +1028,7 @@ export default function BuyerOrders() {
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+
             <input
               type="search"
               value={searchTerm}
@@ -870,6 +1052,7 @@ export default function BuyerOrders() {
               }`}
             >
               {filter.label}
+
               {filter.value === 'all' && (
                 <span className="ml-2 opacity-75">{stats.total}</span>
               )}
@@ -916,8 +1099,7 @@ export default function BuyerOrders() {
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                           <div>
                             <h3 className="text-lg font-bold text-gray-900">
-                              {order.product?.crop_name ||
-                                'Product unavailable'}
+                              {order.product?.crop_name || 'Product unavailable'}
                             </h3>
 
                             <p className="mt-1 text-sm text-gray-500">
@@ -936,8 +1118,7 @@ export default function BuyerOrders() {
                           <div>
                             <p className="text-xs text-gray-500">Quantity</p>
                             <p className="mt-1 text-sm font-semibold text-gray-900">
-                              {order.quantity}{' '}
-                              {order.product?.unit || 'units'}
+                              {order.quantity} {order.product?.unit || 'units'}
                             </p>
                           </div>
 
@@ -956,15 +1137,28 @@ export default function BuyerOrders() {
                           </div>
 
                           <div>
-                            <p className="text-xs text-gray-500">Location</p>
+                            <p className="text-xs text-gray-500">Pickup Location</p>
                             <p className="mt-1 flex items-center gap-1 text-sm font-medium text-gray-900">
                               <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                               <span className="truncate">
-                                {order.delivery_location || 'Pickup arrangement'}
+                                {order.pickup_location ||
+                                  'Awaiting producer details'}
                               </span>
                             </p>
                           </div>
                         </div>
+
+                        {order.status === 'processing' && (
+                          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                            <p className="text-sm font-semibold text-emerald-900">
+                              Your order is ready for pickup
+                            </p>
+                            <p className="mt-1 text-sm text-emerald-800">
+                              Open order details to review the pickup date,
+                              time, location, and instructions.
+                            </p>
+                          </div>
+                        )}
 
                         <div className="mt-4 flex flex-col gap-3 border-t border-gray-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
                           <p className="text-sm text-gray-500">
@@ -984,6 +1178,7 @@ export default function BuyerOrders() {
                           <div className="mt-4 flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                             <div className="flex items-start gap-2">
                               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+
                               <div>
                                 <p className="text-sm font-semibold text-emerald-900">
                                   Have you collected this order?
@@ -1041,6 +1236,7 @@ export default function BuyerOrders() {
                 >
                   Order Details
                 </h2>
+
                 <p className="mt-1 break-all text-xs text-gray-500">
                   {selectedOrder.id}
                 </p>
@@ -1062,7 +1258,9 @@ export default function BuyerOrders() {
                   {selectedOrder.imageUrl ? (
                     <img
                       src={selectedOrder.imageUrl}
-                      alt={selectedOrder.product?.crop_name || 'Ordered product'}
+                      alt={
+                        selectedOrder.product?.crop_name || 'Ordered product'
+                      }
                       className="h-full w-full object-cover"
                     />
                   ) : (
@@ -1076,8 +1274,7 @@ export default function BuyerOrders() {
                   <StatusBadge status={selectedOrder.status} />
 
                   <h3 className="mt-3 text-xl font-bold text-gray-900">
-                    {selectedOrder.product?.crop_name ||
-                      'Product unavailable'}
+                    {selectedOrder.product?.crop_name || 'Product unavailable'}
                   </h3>
 
                   <p className="mt-1 text-sm text-gray-500">
@@ -1095,7 +1292,6 @@ export default function BuyerOrders() {
                 <h3 className="mb-4 font-semibold text-gray-900">
                   Order Progress
                 </h3>
-
                 <OrderTimeline status={selectedOrder.status} />
               </div>
 
@@ -1118,14 +1314,27 @@ export default function BuyerOrders() {
                     </span>
                   )}
 
-                  {selectedOrder.producer?.phone_number && (
-                    <a
-                      href={`tel:${selectedOrder.producer.phone_number}`}
-                      className="mt-3 flex items-center gap-2 text-sm font-medium text-emerald-700 hover:underline"
-                    >
-                      <Phone className="h-4 w-4" />
-                      {selectedOrder.producer.phone_number}
-                    </a>
+                  {['confirmed', 'processing', 'completed'].includes(
+                    selectedOrder.status
+                  ) ? (
+                    selectedOrder.producer?.phone_number ? (
+                      <a
+                        href={`tel:${selectedOrder.producer.phone_number}`}
+                        className="mt-3 flex items-center gap-2 break-all text-sm font-medium text-emerald-700 hover:underline"
+                      >
+                        <Phone className="h-4 w-4 shrink-0" />
+                        {selectedOrder.producer.phone_number}
+                      </a>
+                    ) : (
+                      <p className="mt-3 text-xs text-gray-500">
+                        The producer has not provided a phone number.
+                      </p>
+                    )
+                  ) : (
+                    <p className="mt-3 text-xs text-gray-500">
+                      Producer contact details are available after the order
+                      is confirmed.
+                    </p>
                   )}
                 </div>
 
@@ -1133,21 +1342,23 @@ export default function BuyerOrders() {
                   <div className="flex items-center gap-2 text-gray-500">
                     <MapPin className="h-4 w-4" />
                     <span className="text-xs font-medium">
-                      Collection Location
+                      Original Order Location
                     </span>
                   </div>
 
-                  <p className="mt-2 font-semibold text-gray-900">
+                  <p className="mt-2 break-words font-semibold text-gray-900">
                     {selectedOrder.delivery_location ||
-                      selectedOrder.product?.location ||
-                      'Arrange pickup with the producer'}
+                      'No original order location recorded'}
                   </p>
 
                   <p className="mt-2 text-xs text-gray-500">
-                    Delivery is not included in the current AgroLink workflow.
+                    Refer to the pickup arrangements below for the producer's
+                    collection location.
                   </p>
                 </div>
               </div>
+
+              <PickupArrangements order={selectedOrder} />
 
               <div className="rounded-xl border border-gray-200 p-4">
                 <h3 className="font-semibold text-gray-900">
@@ -1166,8 +1377,7 @@ export default function BuyerOrders() {
                     <dt className="text-gray-500">Last updated</dt>
                     <dd className="text-right font-medium text-gray-900">
                       {formatDate(
-                        selectedOrder.updated_at ||
-                          selectedOrder.created_at
+                        selectedOrder.updated_at || selectedOrder.created_at
                       )}
                     </dd>
                   </div>
@@ -1192,10 +1402,12 @@ export default function BuyerOrders() {
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <div className="flex items-start gap-2">
                   <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+
                   <div>
                     <p className="text-sm font-semibold text-amber-900">
                       Payment and collection
                     </p>
+
                     <p className="mt-1 text-sm leading-6 text-amber-800">
                       Confirm collection only after receiving your products.
                       This action updates the order status; it does not
@@ -1220,6 +1432,7 @@ export default function BuyerOrders() {
               {selectedOrder.status === 'completed' && (
                 <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-700" />
+
                   <div>
                     <p className="font-semibold text-emerald-900">
                       Order completed
@@ -1237,6 +1450,16 @@ export default function BuyerOrders() {
                     Your order is awaiting the producer's response. If you
                     need to cancel it, contact the producer or AgroLink
                     support for assistance.
+                  </p>
+                </div>
+              )}
+
+              {selectedOrder.status === 'confirmed' && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-sm text-blue-900">
+                    Your order has been accepted. Check the pickup
+                    arrangements above, and wait for the order to be marked
+                    Ready for Pickup before confirming receipt.
                   </p>
                 </div>
               )}

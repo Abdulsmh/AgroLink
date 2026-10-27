@@ -1,3 +1,4 @@
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -34,19 +35,24 @@ const formatNumber = (amount) =>
 
 const formatDate = (date) => {
   if (!date) return 'Recently';
+  const parsed = new Date(date);
 
-  return new Date(date).toLocaleDateString('en-NG', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return Number.isNaN(parsed.getTime())
+    ? 'Recently'
+    : parsed.toLocaleDateString('en-NG', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
 };
 
 const getProductImages = (imagePath) => {
   if (!imagePath) return [];
 
   if (Array.isArray(imagePath)) {
-    return imagePath.filter(Boolean);
+    return imagePath.filter(
+      (item) => typeof item === 'string' && item.trim()
+    );
   }
 
   if (typeof imagePath !== 'string') return [];
@@ -54,26 +60,31 @@ const getProductImages = (imagePath) => {
   try {
     const parsed = JSON.parse(imagePath);
 
-    if (Array.isArray(parsed)) return parsed.filter(Boolean);
-    return parsed ? [parsed] : [];
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (item) => typeof item === 'string' && item.trim()
+      );
+    }
+
+    return typeof parsed === 'string' && parsed.trim() ? [parsed] : [];
   } catch {
-    return [imagePath];
+    return [imagePath.trim()].filter(Boolean);
   }
 };
 
 const getStorageImageUrl = (imagePath) => {
   if (!imagePath || typeof imagePath !== 'string') return null;
 
-  if (
-    imagePath.startsWith('http://') ||
-    imagePath.startsWith('https://')
-  ) {
-    return imagePath;
-  }
+  const path = imagePath.trim();
+  if (!path) return null;
 
-  const cleanedPath = imagePath
+  if (/^https?:\/\//i.test(path)) return path;
+
+  const cleanedPath = path
     .replace(/^product-images\//, '')
     .replace(/^\/+/, '');
+
+  if (!cleanedPath) return null;
 
   const { data } = supabase.storage
     .from('product-images')
@@ -111,12 +122,8 @@ const getProducerName = (producer) =>
   producer?.full_name ||
   'AgroLink Producer';
 
-const StarRating = ({
-  value = 0,
-  size = 'h-4 w-4',
-  showValue = false,
-}) => {
-  const rating = Number(value || 0);
+const StarRating = ({ value = 0, size = 'h-4 w-4', showValue = false }) => {
+  const rating = Math.max(0, Math.min(5, Number(value || 0)));
 
   return (
     <span className="inline-flex items-center gap-1">
@@ -149,7 +156,7 @@ const RatingSummary = ({ rating, count, label }) => (
   <div className="flex min-w-0 items-center gap-2">
     <StarRating value={rating} size="h-3.5 w-3.5" showValue />
     <span className="truncate text-xs text-slate-500">
-      {count > 0
+      {Number(count || 0) > 0
         ? `${formatNumber(count)} ${label}`
         : `No ${label} yet`}
     </span>
@@ -200,7 +207,10 @@ const ProductCard = ({
     <article
       onClick={() => onOpen(product)}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (
+          event.target === event.currentTarget &&
+          (event.key === 'Enter' || event.key === ' ')
+        ) {
           event.preventDefault();
           onOpen(product);
         }
@@ -214,9 +224,12 @@ const ProductCard = ({
         {imageUrl ? (
           <img
             src={imageUrl}
-            alt={product.crop_name}
+            alt={product.crop_name || 'Crop'}
             loading="lazy"
             className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+            onError={(event) => {
+              event.currentTarget.style.display = 'none';
+            }}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-slate-400">
@@ -289,7 +302,6 @@ const ProductCard = ({
               <p className="text-base font-extrabold text-emerald-700 sm:text-lg">
                 {formatNaira(product.price_per_unit)}
               </p>
-
               <p className="text-[11px] text-slate-500">
                 per {product.unit || 'unit'}
               </p>
@@ -308,7 +320,8 @@ const ProductCard = ({
                 event.stopPropagation();
                 onRequestBooking(product);
               }}
-              className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700"
+              disabled={isOutOfStock}
+              className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Sprout className="h-4 w-4" />
               Request Booking
@@ -354,6 +367,7 @@ const ProductModal = ({
   imageIndex,
   quantity,
   currentUser,
+  currentProfile,
   reviews,
   eligibleOrders,
   reviewStars,
@@ -373,7 +387,10 @@ const ProductModal = ({
   onRequestBooking,
 }) => {
   const images = getProductImages(product.image_path);
-  const imageUrl = getStorageImageUrl(images[imageIndex]);
+  const safeImageIndex = images.length
+    ? Math.min(imageIndex, images.length - 1)
+    : 0;
+  const imageUrl = getStorageImageUrl(images[safeImageIndex]);
   const stock = Number(product.quantity || 0);
   const stockStatus = getStockStatus(stock);
   const producerName = getProducerName(product.producer);
@@ -382,15 +399,18 @@ const ProductModal = ({
   const sellerRating = product.sellerRating || {};
   const isPreHarvest = product.product_type === 'pre_harvest';
 
-  const reviewableOrders = eligibleOrders.filter(
-    (order) =>
-      order.product_id === product.id &&
-      !reviews.some(
-        (review) =>
-          review.order_id === order.id &&
-          review.buyer_id === currentUser?.id
-      )
-  );
+  const reviewableOrders =
+    currentProfile?.role === 'buyer'
+      ? eligibleOrders.filter(
+          (order) =>
+            order.product_id === product.id &&
+            !reviews.some(
+              (review) =>
+                review.order_id === order.id &&
+                review.buyer_id === currentUser?.id
+            )
+        )
+      : [];
 
   const latestReviews = [...reviews]
     .filter((review) => review.product_id === product.id)
@@ -412,7 +432,6 @@ const ProductModal = ({
             <Package className="h-4 w-4 text-emerald-600" />
             Product details
           </div>
-
           <button
             type="button"
             onClick={onClose}
@@ -430,8 +449,11 @@ const ProductModal = ({
                 {imageUrl ? (
                   <img
                     src={imageUrl}
-                    alt={product.crop_name}
+                    alt={product.crop_name || 'Crop'}
                     className="h-full w-full object-contain"
+                    onError={(event) => {
+                      event.currentTarget.style.display = 'none';
+                    }}
                   />
                 ) : (
                   <div className="flex flex-col items-center gap-2 text-slate-400">
@@ -451,7 +473,6 @@ const ProductModal = ({
                   >
                     <ChevronLeft className="h-5 w-5" />
                   </button>
-
                   <button
                     type="button"
                     onClick={onNextImage}
@@ -476,7 +497,7 @@ const ProductModal = ({
                       onClick={() => onSelectImage(index)}
                       aria-label={`View image ${index + 1}`}
                       className={`h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 bg-white ${
-                        imageIndex === index
+                        safeImageIndex === index
                           ? 'border-emerald-500'
                           : 'border-transparent'
                       }`}
@@ -484,7 +505,7 @@ const ProductModal = ({
                       {thumbnailUrl ? (
                         <img
                           src={thumbnailUrl}
-                          alt={`${product.crop_name} ${index + 1}`}
+                          alt={`${product.crop_name || 'Crop'} ${index + 1}`}
                           className="h-full w-full object-cover"
                         />
                       ) : (
@@ -501,14 +522,12 @@ const ProductModal = ({
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
                   <UserRound className="h-5 w-5" />
                 </div>
-
                 <div className="min-w-0">
                   <p className="text-xs text-slate-500">Farmer / seller</p>
                   <p className="truncate text-sm font-bold text-slate-900">
                     {producerName}
                   </p>
                 </div>
-
                 {product.producer?.verification_status === 'approved' && (
                   <CheckCircle2 className="ml-auto h-5 w-5 shrink-0 text-emerald-600" />
                 )}
@@ -519,7 +538,6 @@ const ProductModal = ({
                   Farm: {product.producer.farm_name}
                 </p>
               )}
-
               {product.producer?.lga_location && (
                 <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
                   <MapPin className="h-3.5 w-3.5" />
@@ -538,7 +556,6 @@ const ProductModal = ({
                     label="seller ratings"
                   />
                 </div>
-
                 <div>
                   <p className="mb-1 text-xs font-semibold text-slate-600">
                     This product
@@ -559,7 +576,6 @@ const ProductModal = ({
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold capitalize text-emerald-700">
                   {isPreHarvest ? 'Pre-harvest' : 'Post-harvest'}
                 </span>
-
                 <span
                   className={`rounded-full border px-3 py-1 text-xs font-bold ${stockStatus.className}`}
                 >
@@ -570,7 +586,6 @@ const ProductModal = ({
               <h2 className="text-2xl font-extrabold capitalize tracking-tight text-slate-900">
                 {product.crop_name}
               </h2>
-
               <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
                 {product.description?.trim() ||
                   'No detailed product description has been added by the producer yet.'}
@@ -587,7 +602,6 @@ const ProductModal = ({
                   per {product.unit || 'unit'}
                 </p>
               </div>
-
               <div className="rounded-2xl border border-slate-200 p-3">
                 <p className="text-xs text-slate-500">Available quantity</p>
                 <p className="mt-1 text-lg font-extrabold text-slate-900">
@@ -603,7 +617,6 @@ const ProductModal = ({
               <h3 className="text-sm font-bold text-slate-900">
                 Product information
               </h3>
-
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-slate-500">Location</span>
                 <span className="flex items-center gap-1 text-right font-semibold text-slate-800">
@@ -611,14 +624,12 @@ const ProductModal = ({
                   {product.location || 'Not specified'}
                 </span>
               </div>
-
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-slate-500">Unit</span>
                 <span className="font-semibold capitalize text-slate-800">
                   {product.unit || 'Unit'}
                 </span>
               </div>
-
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-slate-500">Listing type</span>
                 <span className="font-semibold text-slate-800">
@@ -637,18 +648,18 @@ const ProductModal = ({
                         Reserve before harvest
                       </h3>
                       <p className="mt-1 text-xs leading-5 text-emerald-800">
-                        Submit your requested quantity and preferred collection
-                        date. The producer or authorized aggregator will respond
-                        to your request.
+                        Submit your requested quantity, price, preferred
+                        collection date, and pickup location. The producer or
+                        authorized aggregator will respond to your request.
                       </p>
                     </div>
                   </div>
                 </div>
-
                 <button
                   type="button"
                   onClick={() => onRequestBooking(product)}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700"
+                  disabled={stock <= 0}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Sprout className="h-4 w-4" />
                   Request Advance Booking
@@ -662,12 +673,10 @@ const ProductModal = ({
                     <h3 className="text-sm font-bold text-slate-900">
                       Quantity
                     </h3>
-
                     <span className="text-xs text-slate-500">
                       Maximum: {formatNumber(stock)}
                     </span>
                   </div>
-
                   <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-2">
                     <button
                       type="button"
@@ -678,11 +687,9 @@ const ProductModal = ({
                     >
                       <Minus className="h-4 w-4" />
                     </button>
-
                     <span className="text-base font-extrabold text-slate-900">
                       {quantity} {product.unit || 'unit'}
                     </span>
-
                     <button
                       type="button"
                       onClick={onIncreaseQuantity}
@@ -716,7 +723,6 @@ const ProductModal = ({
                     <ShoppingCart className="h-4 w-4" />
                     Add to cart
                   </button>
-
                   <button
                     type="button"
                     disabled={stock <= 0}
@@ -748,112 +754,114 @@ const ProductModal = ({
                     Feedback from buyers about this specific product.
                   </p>
                 </div>
-
                 <div className="text-right">
                   <p className="text-xl font-extrabold text-slate-900">
                     {Number(productRating.avg || 0).toFixed(1)}
                   </p>
-                  <StarRating
-                    value={productRating.avg}
-                    size="h-3.5 w-3.5"
-                  />
+                  <StarRating value={productRating.avg} size="h-3.5 w-3.5" />
                   <p className="mt-1 text-[11px] text-slate-500">
                     {formatNumber(productRating.count || 0)} reviews
                   </p>
                 </div>
               </div>
 
-              {currentUser && reviewableOrders.length > 0 && (
-                <form
-                  onSubmit={onSubmitReview}
-                  className="mt-4 space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4"
-                >
-                  <div>
-                    <label className="text-sm font-bold text-slate-800">
-                      Rate this product
-                    </label>
-
-                    <div className="mt-2 flex items-center gap-1">
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <button
-                          key={star}
-                          type="button"
-                          onClick={() => onReviewStarsChange(star)}
-                          className="rounded-md p-1 transition hover:scale-110"
-                          aria-label={`Rate ${star} out of 5 stars`}
-                        >
-                          <Star
-                            className={`h-7 w-7 ${
-                              star <= reviewStars
-                                ? 'fill-amber-400 text-amber-400'
-                                : 'text-slate-300'
-                            }`}
-                          />
-                        </button>
-                      ))}
-
-                      <span className="ml-2 text-xs font-semibold text-slate-600">
-                        {reviewStars}/5
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="product-review-text"
-                      className="text-sm font-bold text-slate-800"
-                    >
-                      Your review (optional)
-                    </label>
-
-                    <textarea
-                      id="product-review-text"
-                      value={reviewText}
-                      onChange={(event) =>
-                        onReviewTextChange(event.target.value)
-                      }
-                      maxLength={2000}
-                      rows={3}
-                      placeholder="Share your experience with this product..."
-                      className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
-                    />
-
-                    <p className="mt-1 text-right text-[11px] text-slate-500">
-                      {reviewText.length}/2000
-                    </p>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={submittingReview}
-                    className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              {currentUser &&
+                currentProfile?.role === 'buyer' &&
+                reviewableOrders.length > 0 && (
+                  <form
+                    onSubmit={onSubmitReview}
+                    className="mt-4 space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4"
                   >
-                    {submittingReview
-                      ? 'Submitting review...'
-                      : 'Submit review'}
-                  </button>
+                    <div>
+                      <label className="text-sm font-bold text-slate-800">
+                        Rate this product
+                      </label>
+                      <div className="mt-2 flex items-center gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={() => onReviewStarsChange(star)}
+                            className="rounded-md p-1 transition hover:scale-110"
+                            aria-label={`Rate ${star} out of 5 stars`}
+                          >
+                            <Star
+                              className={`h-7 w-7 ${
+                                star <= reviewStars
+                                  ? 'fill-amber-400 text-amber-400'
+                                  : 'text-slate-300'
+                              }`}
+                            />
+                          </button>
+                        ))}
+                        <span className="ml-2 text-xs font-semibold text-slate-600">
+                          {reviewStars}/5
+                        </span>
+                      </div>
+                    </div>
 
-                  <p className="text-[11px] leading-5 text-slate-500">
-                    Available because you have a completed order for this
-                    product. One review is allowed per order.
-                  </p>
-                </form>
-              )}
+                    <div>
+                      <label
+                        htmlFor="product-review-text"
+                        className="text-sm font-bold text-slate-800"
+                      >
+                        Your review (optional)
+                      </label>
+                      <textarea
+                        id="product-review-text"
+                        value={reviewText}
+                        onChange={(event) =>
+                          onReviewTextChange(event.target.value)
+                        }
+                        maxLength={2000}
+                        rows={3}
+                        placeholder="Share your experience with this product..."
+                        className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+                      />
+                      <p className="mt-1 text-right text-[11px] text-slate-500">
+                        {reviewText.length}/2000
+                      </p>
+                    </div>
 
-              {currentUser && reviewableOrders.length === 0 && (
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-                  {latestReviews.some(
-                    (review) => review.buyer_id === currentUser.id
-                  )
-                    ? 'You have already reviewed this product for your eligible completed order.'
-                    : 'Complete an order for this product to become eligible to leave a review.'}
-                </div>
-              )}
+                    <button
+                      type="submit"
+                      disabled={submittingReview}
+                      className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {submittingReview
+                        ? 'Submitting review...'
+                        : 'Submit review'}
+                    </button>
+                    <p className="text-[11px] leading-5 text-slate-500">
+                      Available because you have a completed order for this
+                      product. One review is allowed per order.
+                    </p>
+                  </form>
+                )}
+
+              {currentUser &&
+                currentProfile?.role === 'buyer' &&
+                reviewableOrders.length === 0 && (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                    {latestReviews.some(
+                      (review) => review.buyer_id === currentUser.id
+                    )
+                      ? 'You have already reviewed this product for an eligible completed order.'
+                      : 'Complete an order for this product to become eligible to leave a review.'}
+                  </div>
+                )}
 
               {!currentUser && (
                 <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
                   Sign in as a buyer and complete an order to leave a product
                   review.
+                </p>
+              )}
+
+              {currentUser && currentProfile?.role !== 'buyer' && (
+                <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                  Product reviews are available to buyers who have completed
+                  an order for this product.
                 </p>
               )}
 
@@ -879,7 +887,6 @@ const ProductModal = ({
                           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
                             <UserRound className="h-4 w-4" />
                           </div>
-
                           <div>
                             <p className="text-xs font-bold text-slate-800">
                               Verified buyer
@@ -889,13 +896,11 @@ const ProductModal = ({
                             </p>
                           </div>
                         </div>
-
                         <StarRating
                           value={review.stars}
                           size="h-3.5 w-3.5"
                         />
                       </div>
-
                       {review.review_text?.trim() && (
                         <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">
                           {review.review_text}
@@ -918,8 +923,8 @@ const PreHarvest = () => {
 
   const [products, setProducts] = useState([]);
   const [productReviews, setProductReviews] = useState([]);
-  const [sellerRatings, setSellerRatings] = useState({});
   const [currentUser, setCurrentUser] = useState(null);
+  const [currentProfile, setCurrentProfile] = useState(null);
   const [eligibleOrders, setEligibleOrders] = useState([]);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -953,9 +958,7 @@ const PreHarvest = () => {
 
       if (productsError) throw productsError;
 
-      const rows = (productRows || []).filter(
-        (product) => product.product_type === 'pre_harvest'
-      );
+      const rows = productRows || [];
       const productIds = rows.map((product) => product.id);
       const producerIds = [
         ...new Set(rows.map((product) => product.producer_id).filter(Boolean)),
@@ -965,7 +968,31 @@ const PreHarvest = () => {
       let sellerRatingMap = {};
       let reviewRows = [];
       let user = null;
+      let profile = null;
       let completedOrders = [];
+
+      // Get the authenticated user and the authoritative AgroLink role.
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
+
+      if (!authError) user = authData?.user || null;
+
+      if (user?.id) {
+        const { data: profileRow, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, role, verification_status')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (profileError) {
+          console.warn(
+            'Current profile lookup unavailable:',
+            profileError.message
+          );
+        } else {
+          profile = profileRow || null;
+        }
+      }
 
       if (producerIds.length > 0) {
         const { data: producers, error: producersError } = await supabase
@@ -982,6 +1009,7 @@ const PreHarvest = () => {
           return map;
         }, {});
 
+        // Ratings are optional. A ratings-view problem must not break listings.
         const { data: ratingRows, error: ratingError } = await supabase
           .from('profile_ratings')
           .select('profile_id, avg_stars, rating_count')
@@ -1013,20 +1041,16 @@ const PreHarvest = () => {
           .order('created_at', { ascending: false });
 
         if (reviewsError) {
-          console.warn('Product reviews unavailable:', reviewsError.message);
+          console.warn(
+            'Product reviews unavailable:',
+            reviewsError.message
+          );
         } else {
           reviewRows = reviews || [];
         }
       }
 
-      const { data: authData, error: authError } =
-        await supabase.auth.getUser();
-
-      if (!authError) {
-        user = authData?.user || null;
-      }
-
-      if (user && productIds.length > 0) {
+      if (user?.id && profile?.role === 'buyer' && productIds.length > 0) {
         const { data: orders, error: ordersError } = await supabase
           .from('orders')
           .select('id, product_id, status')
@@ -1045,13 +1069,12 @@ const PreHarvest = () => {
       }
 
       const reviewSummaryMap = reviewRows.reduce((map, review) => {
-        const key = review.product_id;
+        if (!map[review.product_id]) {
+          map[review.product_id] = { total: 0, count: 0 };
+        }
 
-        if (!map[key]) map[key] = { total: 0, count: 0 };
-
-        map[key].total += Number(review.stars || 0);
-        map[key].count += 1;
-
+        map[review.product_id].total += Number(review.stars || 0);
+        map[review.product_id].count += 1;
         return map;
       }, {});
 
@@ -1079,11 +1102,17 @@ const PreHarvest = () => {
 
       setProducts(preparedProducts);
       setProductReviews(reviewRows);
-      setSellerRatings(sellerRatingMap);
       setCurrentUser(user);
+      setCurrentProfile(profile);
       setEligibleOrders(completedOrders);
 
+      // Keep open modals synchronized with the latest product data.
       setActiveModalProduct((current) => {
+        if (!current) return null;
+        return preparedProducts.find((item) => item.id === current.id) || null;
+      });
+
+      setBookingProduct((current) => {
         if (!current) return null;
         return preparedProducts.find((item) => item.id === current.id) || null;
       });
@@ -1201,9 +1230,21 @@ const PreHarvest = () => {
       return;
     }
 
-    if (currentUser.user_metadata?.role &&
-        currentUser.user_metadata.role !== 'buyer') {
+    // AgroLink roles are stored in profiles, not user_metadata.
+    if (!currentProfile?.role) {
+      toast.error(
+        'Your AgroLink profile could not be verified. Please sign in again.'
+      );
+      return;
+    }
+
+    if (currentProfile.role !== 'buyer') {
       toast.error('Only buyer accounts can request pre-harvest bookings.');
+      return;
+    }
+
+    if (Number(product.quantity || 0) <= 0) {
+      toast.error('This crop is currently unavailable for booking.');
       return;
     }
 
@@ -1211,9 +1252,7 @@ const PreHarvest = () => {
     setBookingProduct(product);
   };
 
-  const closeBookingModal = () => {
-    setBookingProduct(null);
-  };
+  const closeBookingModal = () => setBookingProduct(null);
 
   const readCart = () => {
     try {
@@ -1226,8 +1265,13 @@ const PreHarvest = () => {
   };
 
   const writeCart = (cart) => {
-    localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    window.dispatchEvent(new Event('agrolink-cart-updated'));
+    try {
+      localStorage.setItem(CART_KEY, JSON.stringify(cart));
+      window.dispatchEvent(new Event('agrolink-cart-updated'));
+    } catch (cartError) {
+      console.error('Unable to save cart:', cartError);
+      toast.error('Unable to save your cart in this browser.');
+    }
   };
 
   const createCartItem = (product, quantity) => ({
@@ -1262,14 +1306,13 @@ const PreHarvest = () => {
     const existingIndex = cart.findIndex((item) => item.id === product.id);
 
     if (existingIndex >= 0) {
-      const existingItem = cart[existingIndex];
       const updatedQuantity = Math.min(
-        Number(existingItem.quantity || 0) + safeQuantity,
+        Number(cart[existingIndex].quantity || 0) + safeQuantity,
         availableQuantity
       );
 
       cart[existingIndex] = {
-        ...existingItem,
+        ...cart[existingIndex],
         ...createCartItem(product, updatedQuantity),
       };
 
@@ -1289,9 +1332,7 @@ const PreHarvest = () => {
   };
 
   const handleQuickBuy = (product, quantity = 1) => {
-    const added = addProductToCart(product, quantity);
-
-    if (added) {
+    if (addProductToCart(product, quantity)) {
       closeProductModal();
       navigate('/checkout');
     }
@@ -1303,17 +1344,23 @@ const PreHarvest = () => {
     const images = getProductImages(activeModalProduct.image_path);
     if (images.length <= 1) return;
 
-    setActiveImageIndex((currentIndex) => {
-      if (direction === 'next') return (currentIndex + 1) % images.length;
-      return (currentIndex - 1 + images.length) % images.length;
-    });
+    setActiveImageIndex((currentIndex) =>
+      direction === 'next'
+        ? (currentIndex + 1) % images.length
+        : (currentIndex - 1 + images.length) % images.length
+    );
   };
 
   const handleSubmitReview = async (event) => {
     event.preventDefault();
 
-    if (!currentUser) {
+    if (!currentUser?.id) {
       toast.error('Please sign in before submitting a review.');
+      return;
+    }
+
+    if (currentProfile?.role !== 'buyer') {
+      toast.error('Only buyer accounts can submit product reviews.');
       return;
     }
 
@@ -1334,11 +1381,9 @@ const PreHarvest = () => {
       return;
     }
 
-    if (
-      !Number.isInteger(Number(reviewStars)) ||
-      reviewStars < 1 ||
-      reviewStars > 5
-    ) {
+    const stars = Number(reviewStars);
+
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
       toast.error('Please select a star rating from 1 to 5.');
       return;
     }
@@ -1352,7 +1397,7 @@ const PreHarvest = () => {
           product_id: activeModalProduct.id,
           buyer_id: currentUser.id,
           order_id: reviewableOrder.id,
-          stars: Number(reviewStars),
+          stars,
           review_text: reviewText.trim() || null,
         });
 
@@ -1361,7 +1406,6 @@ const PreHarvest = () => {
       toast.success('Thank you! Your product review has been submitted.');
       setReviewStars(5);
       setReviewText('');
-
       await fetchProducts(true);
     } catch (submitError) {
       console.error('Product review submission error:', submitError);
@@ -1387,11 +1431,9 @@ const PreHarvest = () => {
               <Sprout className="h-4 w-4" />
               Advance crop listings from AgroLink producers
             </div>
-
             <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl lg:text-5xl">
               Pre-Harvest Crops
             </h1>
-
             <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">
               Discover crops before harvest, compare prices and producer
               ratings, read buyer reviews, and reserve the quantity you need
@@ -1408,7 +1450,6 @@ const PreHarvest = () => {
                 Listings
               </p>
             </div>
-
             <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm sm:p-4">
               <p className="text-xl font-extrabold text-emerald-700 sm:text-2xl">
                 {formatNumber(stats.availableListings)}
@@ -1417,7 +1458,6 @@ const PreHarvest = () => {
                 In stock
               </p>
             </div>
-
             <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm sm:p-4">
               <p className="text-xl font-extrabold text-emerald-700 sm:text-2xl">
                 {formatNumber(stats.producers)}
@@ -1434,7 +1474,6 @@ const PreHarvest = () => {
         <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="relative w-full lg:max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
             <input
               type="search"
               value={searchQuery}
@@ -1448,7 +1487,6 @@ const PreHarvest = () => {
             <span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-sm font-bold text-emerald-700">
               Advance booking
             </span>
-
             <button
               type="button"
               onClick={() => fetchProducts(true)}
@@ -1483,7 +1521,6 @@ const PreHarvest = () => {
         ) : error ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
             <p className="text-sm font-semibold text-red-700">{error}</p>
-
             <button
               type="button"
               onClick={() => fetchProducts()}
@@ -1495,11 +1532,9 @@ const PreHarvest = () => {
         ) : filteredProducts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-14 text-center">
             <Package className="mx-auto h-10 w-10 text-slate-300" />
-
             <h2 className="mt-4 text-lg font-bold text-slate-900">
               No pre-harvest crops found
             </h2>
-
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
               Try another crop name, description, location, or producer.
             </p>
@@ -1526,6 +1561,7 @@ const PreHarvest = () => {
           imageIndex={activeImageIndex}
           quantity={modalQuantity}
           currentUser={currentUser}
+          currentProfile={currentProfile}
           reviews={productReviews}
           eligibleOrders={eligibleOrders}
           reviewStars={reviewStars}
@@ -1540,18 +1576,21 @@ const PreHarvest = () => {
           onSelectImage={setActiveImageIndex}
           onIncreaseQuantity={() => {
             setModalQuantity((current) =>
-              Math.min(current + 1, Number(activeModalProduct.quantity || 0))
+              Math.min(
+                current + 1,
+                Number(activeModalProduct.quantity || 0)
+              )
             );
           }}
           onDecreaseQuantity={() => {
             setModalQuantity((current) => Math.max(current - 1, 1));
           }}
-          onAddToCart={() => {
-            handleAddToCart(activeModalProduct, modalQuantity);
-          }}
-          onBuyNow={() => {
-            handleQuickBuy(activeModalProduct, modalQuantity);
-          }}
+          onAddToCart={() =>
+            handleAddToCart(activeModalProduct, modalQuantity)
+          }
+          onBuyNow={() =>
+            handleQuickBuy(activeModalProduct, modalQuantity)
+          }
           onRequestBooking={handleRequestBooking}
         />
       )}
